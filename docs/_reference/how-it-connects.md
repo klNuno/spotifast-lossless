@@ -163,14 +163,16 @@ current-track pickup.
   system reports no internet connection.
 
   On Windows, macOS, and Linux, downloading an update fetches release metadata and
-  `checksums.txt` from the project's GitHub release, then the matching binary
-  archive, Windows installer, or universal macOS DMG. Spotifast checks the published SHA-256 digest
-  and the portable executable's reported version before offering a restart.
+  `checksums.txt` and `checksums.txt.sig` from the project's GitHub release. It
+  verifies the manifest's Ed25519 signature against its embedded publisher key
+  before downloading the matching binary archive, Windows installer, or universal
+  macOS DMG. Spotifast then checks the published SHA-256 digest and the portable
+  executable's reported version before offering a restart.
   Automatic downloads are optional; installation always waits for your click.
   Checks and downloads do not open the update popup. The green update pill opens
   it on request; closing the popup does not cancel a download.
-  No Spotify credential is sent. These are GitHub-hosted checksums, not a
-  separate publisher signature.
+  No Spotify credential is sent. Missing or invalid publisher signatures are
+  rejected; the updater does not fall back to trusting unsigned checksums.
 
   Updates stage their files in a private `.spotifast-update-*` directory beside
   the application so replacement stays on the same filesystem. The directory
