@@ -58,6 +58,25 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: mbx doc --locked --all-features --no-deps
 
+  # The libraries Spotifast gives Soloist are committed, since every target
+  # embeds them and only Linux can build them. Rebuild them with the
+  # toolchain build.sh names, check the PulseAudio ABI they mirror, and fail
+  # if the result differs from what is committed.
+  soloist-shim:
+    name: soloist shim
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: PulseAudio headers for the ABI check
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse-dev
+      - name: Rebuild and compare
+        run: |
+          PULSE_INCLUDE=/usr/include soloist/shim/build.sh
+          git diff --exit-code --stat -- soloist/shim/
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

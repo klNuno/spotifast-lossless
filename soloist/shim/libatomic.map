@@ -1,0 +1,10 @@
+LIBATOMIC_1.0 {
+  global:
+    __atomic_load;
+    __atomic_store;
+    __atomic_exchange;
+    __atomic_load_16;
+    __atomic_store_16;
+  local:
+    *;
+};
