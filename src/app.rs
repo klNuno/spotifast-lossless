@@ -318,6 +318,12 @@ pub struct App {
     local_transfer_sequence: Option<u64>,
     /// Local playback is authorized and the engine is connected.
     pub local_ready: bool,
+    /// Whether Soloist's client key is stored; `None` until the backend says.
+    pub soloist_key_saved: Option<bool>,
+    /// A Soloist key being typed in Settings, never saved to settings.json.
+    pub soloist_key_input: String,
+    /// A save or removal of the key is on its way to protected storage.
+    pub soloist_key_saving: bool,
     pub local_playback: LocalPlayback,
     pub local: LocalState,
     pub remote: Option<RemoteSnapshot>,
@@ -713,6 +719,9 @@ impl App {
             waker.clone(),
             options.restore_sign_in,
         );
+        if settings.lossless && crate::soloist::AVAILABLE {
+            backend.send(Command::CheckSoloistKey);
+        }
         let locale = settings.language.resolve();
         let applied_proxy = if options.restore_sign_in {
             crate::settings::ProxyConfig::Invalid(
@@ -814,6 +823,9 @@ impl App {
             local_device_id: None,
             local_transfer_sequence: None,
             local_ready: false,
+            soloist_key_saved: None,
+            soloist_key_input: String::new(),
+            soloist_key_saving: false,
             local_playback: LocalPlayback::Unavailable,
             local: LocalState::default(),
             remote: None,
@@ -1919,6 +1931,20 @@ impl App {
                     self.handle_proxy_restored(config, password)
                 }
                 Event::ProxyPasswordStored => self.handle_proxy_password_stored(),
+                Event::SoloistKey(Ok(saved)) => {
+                    if std::mem::take(&mut self.soloist_key_saving) {
+                        self.toast(if saved {
+                            gettext(self.locale, "Soloist key saved")
+                        } else {
+                            gettext(self.locale, "Soloist key removed")
+                        });
+                    }
+                    self.soloist_key_saved = Some(saved);
+                }
+                Event::SoloistKey(Err(error)) => {
+                    self.soloist_key_saving = false;
+                    self.toast_error(error.to_string());
+                }
                 Event::ProxyStorageFailed(error) => {
                     let message = if self.settings.proxy_password_legacy {
                         gettext(
@@ -9465,6 +9491,12 @@ impl App {
                     self.toast(gettext(self.locale, "Restarting local playback"));
                 }
             }
+            Action::SaveSoloistKey => {
+                let key = std::mem::take(&mut self.soloist_key_input);
+                self.soloist_key_saving = true;
+                self.backend.send(Command::SaveSoloistKey(key));
+            }
+            Action::CheckSoloistKey => self.backend.send(Command::CheckSoloistKey),
             Action::ShowWindow => {
                 if self.window_hidden {
                     // No window exists; the outer loop creates one.
@@ -10623,6 +10655,10 @@ pub fn engine_config(
         audio_cache_dir: settings.audio_cache.then(|| dirs.audio_cache_dir()),
         audio_cache_limit: Some(settings.audio_cache_mb.max(64) * 1024 * 1024),
         proxy,
+        soloist: (settings.lossless && crate::soloist::AVAILABLE).then(|| crate::soloist::Config {
+            key: String::new(),
+            dir: dirs.soloist_dir(),
+        }),
     }
 }
 

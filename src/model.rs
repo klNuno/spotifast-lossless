@@ -1134,6 +1134,10 @@ pub enum Action {
         playlist_order: Option<Vec<String>>,
     },
     RestartEngine,
+    /// Store the Soloist key typed in Settings; an empty field removes it.
+    SaveSoloistKey,
+    /// Ask whether a Soloist key is stored.
+    CheckSoloistKey,
     /// Rebuild the HTTP client with the proxy in settings. Local playback
     /// restarts only when its HTTP proxy changed.
     ApplyProxy,

@@ -595,6 +595,11 @@ pub enum Command {
     AuthorizePlayback,
     /// Reload the engine config (audio settings changed).
     RestartEngine(EngineConfig),
+    /// Keep Soloist's client key in protected storage; an empty key forgets
+    /// it. Answered with [`Event::SoloistKey`].
+    SaveSoloistKey(String),
+    /// Report with [`Event::SoloistKey`] whether a Soloist key is stored.
+    CheckSoloistKey,
     /// Rebuild the HTTP client. Restart local playback only when its HTTP
     /// proxy changed; Off, System, and SOCKS5 share a direct engine connection.
     ApplyProxy {
@@ -767,6 +772,8 @@ pub enum Event {
     },
     ProxyPasswordStored,
     ProxyStorageFailed(crate::credentials::Error),
+    /// Whether a Soloist client key is stored, or why storage failed.
+    SoloistKey(Result<bool, crate::credentials::Error>),
     ProxyApplied {
         request: u64,
         config: ProxyConfig,
@@ -1824,6 +1831,8 @@ impl Worker {
                     self.engine_config = config;
                     self.replace_engine();
                 }
+                Command::SaveSoloistKey(key) => self.save_soloist_key(key),
+                Command::CheckSoloistKey => self.check_soloist_key(),
                 Command::ApplyProxy { request, config } => {
                     self.change_proxy(request, config, false)
                 }
@@ -2209,6 +2218,52 @@ impl Worker {
         let _ = cache_writer.await;
     }
 
+    // ---- Soloist key ------------------------------------------------------
+
+    fn save_soloist_key(&mut self, key: String) {
+        let key = key.trim().to_string();
+        self.credentials.invalidate(CredentialSlot::Soloist);
+        let lease = self.credentials.lease(CredentialSlot::Soloist);
+        let saving = !key.is_empty();
+        let operation = if saving {
+            lease.save(StoredGrant::Soloist(crate::credentials::SoloistKey { key }))
+        } else {
+            if let Err(error) = self.credentials.revoke(CredentialSlot::Soloist) {
+                self.emit(Event::SoloistKey(Err(error)));
+                return;
+            }
+            lease.delete()
+        };
+        let events = self.events.clone();
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        let lossless = self.engine_config.soloist.is_some();
+        tokio::spawn(async move {
+            let result = operation.await;
+            if !lease.current() {
+                return;
+            }
+            let ok = result.is_ok();
+            let _ = events.send(Event::SoloistKey(result.map(|()| saving)));
+            // A new key takes effect at once.
+            if ok && saving && lossless {
+                let _ = commands.send(Command::Reconnect);
+            }
+            waker.wake();
+        });
+    }
+
+    fn check_soloist_key(&mut self) {
+        let lease = self.credentials.lease(CredentialSlot::Soloist);
+        let events = self.events.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            let result = lease.load().await.map(|loaded| loaded.grant.is_some());
+            let _ = events.send(Event::SoloistKey(result));
+            waker.wake();
+        });
+    }
+
     // ---- Web API sign-in --------------------------------------------------
 
     fn restore_session(&mut self) {
@@ -2304,7 +2359,7 @@ impl Worker {
                     }
                 }
             }
-            None | Some(StoredGrant::Proxy(_)) => {}
+            None | Some(StoredGrant::Proxy(_) | StoredGrant::Soloist(_)) => {}
         }
         if slot != CredentialSlot::Playback && self.web_tokens[slot.index()].is_none() {
             self.api.clear(if slot == CredentialSlot::Shared {
@@ -2935,17 +2990,27 @@ impl Worker {
         let commands = self.commands.clone();
         let waker = self.waker.clone();
         let session_generation = self.album_type_lookup.session_generation;
+        let soloist_key = self.credentials.lease(CredentialSlot::Soloist);
         tokio::spawn(async move {
-            let cache = match config.open_cache() {
+            let mut config = config;
+            let prepared = match config.open_cache() {
+                Ok(cache) => prepare_soloist(&mut config, soloist_key)
+                    .await
+                    .map(|()| cache),
+                Err(error) => Err(error),
+            };
+            let cache = match prepared {
                 Ok(cache) => cache,
                 Err(error) => {
+                    log::error!("engine connect failed: {error:#}");
                     let _ = commands.send(Command::EngineConnected {
                         lease: lease.clone(),
                         session_generation,
                         engine: Box::new(None),
-                        error: Some(error.to_string()),
+                        error: Some(format!("{error:#}")),
                         attempt,
                     });
+                    waker.wake();
                     return;
                 }
             };
@@ -3631,6 +3696,26 @@ impl Worker {
             }
         });
     }
+}
+
+/// Gives a lossless engine its key and installs Soloist, before the connect
+/// deadline starts: the first install downloads Soloist, and on Windows its
+/// Linux libraries, which a slow connection may not finish in time.
+async fn prepare_soloist(config: &mut EngineConfig, key: CredentialLease) -> anyhow::Result<()> {
+    let Some(soloist) = config.soloist.as_mut() else {
+        return Ok(());
+    };
+    let loaded = key
+        .load()
+        .await
+        .map_err(|error| anyhow::anyhow!("Soloist's client key could not be read: {error}"))?;
+    match loaded.grant {
+        Some(StoredGrant::Soloist(stored)) => soloist.key = stored.key,
+        _ => anyhow::bail!(
+            "Lossless playback needs Soloist's client key. Add it in Settings, or turn lossless off."
+        ),
+    }
+    crate::soloist::install(soloist, &config.proxy).await
 }
 
 fn friendly_connect_error(error: &anyhow::Error) -> String {

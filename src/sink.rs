@@ -114,21 +114,25 @@ impl AudioControl {
     pub(crate) fn handle_player_event(&self, event: &PlayerEvent) {
         match event {
             PlayerEvent::TrackChanged { .. } => self.track_changed(),
-            PlayerEvent::Seeked { .. } => {
-                let target = self.target.lock().unwrap_or_else(PoisonError::into_inner);
-                if let Some(sink) = target.sink.upgrade() {
-                    sink.stop();
-                }
-                self.reset_output.store(true, Ordering::SeqCst);
-                self.reset_processing.store(true, Ordering::SeqCst);
-                // Previous can rewind the current track after interrupting
-                // it. Release that gate, but never close it for a seek:
-                // the decoder is already sending audio from the new position.
-                self.track_changed();
-            }
+            PlayerEvent::Seeked { .. } => self.seeked(),
             PlayerEvent::Stopped { .. } => self.stopped(),
             _ => {}
         }
+    }
+
+    /// Discards queued audio once the source has moved: a seek, or, for
+    /// Soloist, any flush of its stream. What follows is the new position.
+    pub(crate) fn seeked(&self) {
+        let target = self.target.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(sink) = target.sink.upgrade() {
+            sink.stop();
+        }
+        self.reset_output.store(true, Ordering::SeqCst);
+        self.reset_processing.store(true, Ordering::SeqCst);
+        // Previous can rewind the current track after interrupting
+        // it. Release that gate, but never close it for a seek:
+        // the decoder is already sending audio from the new position.
+        self.track_changed();
     }
 
     /// Fades and discards the current output before a user-requested track

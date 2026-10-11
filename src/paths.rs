@@ -98,6 +98,12 @@ impl AppDirs {
         self.state.join("proxy_password")
     }
 
+    /// Spotify Soloist for lossless playback: the program, the libraries
+    /// Spotifast gives it, and its own data and cache.
+    pub fn soloist_dir(&self) -> PathBuf {
+        self.state.join("soloist")
+    }
+
     pub fn volume_dir(&self) -> PathBuf {
         self.state.join("volume")
     }

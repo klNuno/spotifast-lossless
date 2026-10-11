@@ -29,11 +29,19 @@ pub enum Slot {
     Personal,
     Playback,
     Proxy,
+    /// The client key Spotify issues for Soloist, used for lossless playback.
+    Soloist,
 }
 
 impl Slot {
     pub const SPOTIFY: [Self; 3] = [Self::Shared, Self::Personal, Self::Playback];
-    pub const ALL: [Self; 4] = [Self::Shared, Self::Personal, Self::Playback, Self::Proxy];
+    pub const ALL: [Self; 5] = [
+        Self::Shared,
+        Self::Personal,
+        Self::Playback,
+        Self::Proxy,
+        Self::Soloist,
+    ];
     pub(crate) fn index(self) -> usize {
         self as usize
     }
@@ -43,6 +51,7 @@ impl Slot {
             Self::Personal => "personal-web",
             Self::Playback => "playback",
             Self::Proxy => "proxy-password",
+            Self::Soloist => "soloist-key",
         }
     }
 }
@@ -53,6 +62,13 @@ pub enum Grant {
     Web(StoredToken),
     Playback(Credentials),
     Proxy(ProxyPassword),
+    Soloist(SoloistKey),
+}
+
+/// No Debug implementation: the key lets any program run as Soloist.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct SoloistKey {
+    pub key: String,
 }
 
 /// No Debug implementation: the password is usable, and the username is private.
@@ -96,6 +112,9 @@ impl Grant {
                     && !credentials.auth_data.is_empty()
             }
             (Slot::Proxy, Self::Proxy(password)) => password.valid(),
+            (Slot::Soloist, Self::Soloist(soloist)) => {
+                !soloist.key.is_empty() && !soloist.key.chars().any(char::is_whitespace)
+            }
             _ => false,
         }
     }
@@ -220,7 +239,7 @@ type Job = Box<dyn FnOnce(&mut dyn ProtectedStore) + Send>;
 struct Inner {
     dirs: AppDirs,
     profile: String,
-    generations: [AtomicU64; 4],
+    generations: [AtomicU64; Slot::ALL.len()],
     // Held only around the tiny local marker files, never a native store call.
     markers: Mutex<()>,
     jobs: mpsc::SyncSender<Job>,
@@ -366,6 +385,10 @@ impl Store {
     }
 
     fn legacy_paths(&self, slot: Slot) -> Vec<PathBuf> {
+        // Stored natively from the start.
+        if slot == Slot::Soloist {
+            return Vec::new();
+        }
         if slot == Slot::Proxy {
             let path = self.inner.dirs.proxy_secret_file();
             return vec![path.clone(), path.with_extension("tmp")];
@@ -375,7 +398,7 @@ impl Store {
             Slot::Shared => dirs.shared_web_token_file(),
             Slot::Personal => dirs.personal_web_token_file(),
             Slot::Playback => dirs.credentials_dir().join("credentials.json"),
-            Slot::Proxy => unreachable!("proxy legacy paths handled above"),
+            Slot::Proxy | Slot::Soloist => unreachable!("legacy paths handled above"),
         };
         let mut paths = vec![path.clone(), path.with_extension("json.tmp")];
         if slot != Slot::Playback {
@@ -790,6 +813,7 @@ mod tests {
             Grant::Web(token) => serde_json::to_vec(token).unwrap(),
             Grant::Playback(credentials) => serde_json::to_vec(credentials).unwrap(),
             Grant::Proxy(password) => password.password.as_bytes().to_vec(),
+            Grant::Soloist(soloist) => soloist.key.as_bytes().to_vec(),
         };
         std::fs::write(path, bytes).unwrap();
     }
@@ -936,6 +960,9 @@ mod tests {
             web("dummy-personal-client"),
             playback(),
             proxy_password(),
+            Grant::Soloist(SoloistKey {
+                key: "dummy-soloist-key".into(),
+            }),
         ];
         for (slot, grant) in Slot::ALL.into_iter().zip(grants.iter()) {
             store.lease(slot).save(grant.clone()).await.unwrap();
@@ -946,6 +973,7 @@ mod tests {
         }
         store.revoke_spotify().unwrap();
         store.revoke(Slot::Proxy).unwrap();
+        store.revoke(Slot::Soloist).unwrap();
         for slot in Slot::ALL {
             let lease = store.lease(slot);
             lease.delete().await.unwrap();

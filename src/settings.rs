@@ -240,6 +240,9 @@ pub struct Settings {
     pub audio_buffer_ms: u32,
     pub audio_cache: bool,
     pub audio_cache_mb: u64,
+    /// Play through Spotify Soloist, which streams lossless FLAC on accounts
+    /// that have it. Its client key is kept in protected storage.
+    pub lossless: bool,
     pub theme: ThemeChoice,
     /// The interface language; older files without it follow the system.
     pub language: LanguageChoice,
@@ -426,6 +429,7 @@ impl Default for Settings {
             audio_buffer_ms: default_buffer_ms(),
             audio_cache: true,
             audio_cache_mb: 1024,
+            lossless: false,
             theme: ThemeChoice::System,
             language: LanguageChoice::System,
             custom_theme: None,

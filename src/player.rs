@@ -62,6 +62,9 @@ pub struct EngineConfig {
     pub eq: crate::eq::SharedEq,
     /// Proxy used by the Web API client. Librespot only uses the HTTP form.
     pub proxy: crate::settings::ProxyConfig,
+    /// Lossless playback: Spotify Soloist plays instead of librespot's
+    /// player. `None` keeps librespot.
+    pub soloist: Option<crate::soloist::Config>,
 }
 
 impl EngineConfig {
@@ -308,8 +311,7 @@ pub enum EngineEvent {
 pub type Notify = Arc<dyn Fn(EngineEvent) + Send + Sync>;
 
 pub struct Engine {
-    player: Arc<Player>,
-    spirc: Arc<Spirc>,
+    driver: Driver,
     session: Session,
     mixer: Arc<dyn Mixer>,
     device_id: String,
@@ -319,6 +321,29 @@ pub struct Engine {
     shutting_down: Arc<std::sync::atomic::AtomicBool>,
     audio: Arc<AudioControl>,
 }
+
+/// What plays: librespot's player under Spirc, or Spotify Soloist with the
+/// librespot session kept for metadata, lyrics and Connect commands.
+enum Driver {
+    Librespot {
+        player: Arc<Player>,
+        spirc: Arc<Spirc>,
+    },
+    Soloist(Arc<crate::soloist::Soloist>),
+}
+
+/// What both drivers are built from.
+struct Parts {
+    session: Session,
+    mixer: Arc<dyn Mixer>,
+    state: Arc<Mutex<LocalState>>,
+    audio: Arc<AudioControl>,
+    sink: Box<dyn FnOnce() -> Box<dyn Sink> + Send>,
+}
+
+/// How often a Soloist engine checks that its librespot session is alive.
+/// The check reads a flag; under librespot, Spirc notices this itself.
+const SESSION_CHECK: Duration = Duration::from_secs(10);
 
 impl Engine {
     pub(crate) fn credentials(&self) -> Option<Credentials> {
@@ -340,31 +365,7 @@ impl Engine {
             ..SessionConfig::default()
         };
         let normalisation_factor = Arc::new(std::sync::atomic::AtomicU64::new(1.0f64.to_bits()));
-        let player_config = PlayerConfig {
-            bitrate: config.bitrate(),
-            gapless: config.gapless,
-            normalisation: config.normalisation,
-            normalisation_type: NormalisationType::Auto,
-            position_update_interval: Some(Duration::from_secs(1)),
-            // The fork reports each track's normalisation factor here, so
-            // the tap can undo it for the visualisers: they show the music,
-            // not the loudness housekeeping.
-            normalisation_report: Some(Arc::clone(&normalisation_factor)),
-            ..PlayerConfig::default()
-        };
-
-        let mixer_builder =
-            mixer::find(Some("softvol")).ok_or_else(|| anyhow!("soft volume mixer missing"))?;
-        // librespot's default curve spans 60 dB logarithmically, which puts
-        // half the slider below -30 dB and every level anyone wants in its
-        // top quarter. The cubic curve reaches -16 dB at the middle and -7 dB
-        // at three quarters, spreading the useful range across the slider.
-        let mixer = mixer_builder(MixerConfig {
-            volume_ctrl: VolumeCtrl::Cubic(VolumeCtrl::DEFAULT_DB_RANGE),
-            ..MixerConfig::default()
-        })
-        .context("unable to create the mixer")?;
-
+        let mixer = soft_mixer()?;
         let state = Arc::new(Mutex::new(LocalState {
             volume: config.initial_volume,
             ..LocalState::default()
@@ -379,6 +380,28 @@ impl Engine {
             Arc::clone(&normalisation_factor),
             Arc::clone(&audio),
         );
+        if let Some(soloist) = &config.soloist {
+            let parts = Parts {
+                session,
+                mixer,
+                state,
+                audio,
+                sink: sink_builder,
+            };
+            return Self::connect_soloist(config, soloist, parts, credentials, notify).await;
+        }
+        let player_config = PlayerConfig {
+            bitrate: config.bitrate(),
+            gapless: config.gapless,
+            normalisation: config.normalisation,
+            normalisation_type: NormalisationType::Auto,
+            position_update_interval: Some(Duration::from_secs(1)),
+            // The fork reports each track's normalisation factor here, so
+            // the tap can undo it for the visualisers: they show the music,
+            // not the loudness housekeeping.
+            normalisation_report: Some(Arc::clone(&normalisation_factor)),
+            ..PlayerConfig::default()
+        };
         let player = Player::new(player_config, session.clone(), volume, sink_builder);
         let events = player.get_player_event_channel();
         tokio::spawn(run_events(
@@ -415,34 +438,119 @@ impl Engine {
 
         let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let interrupted: Arc<Mutex<Option<Interrupted>>> = Arc::default();
-        let ended_flag = Arc::clone(&shutting_down);
-        let ended_notify = Arc::clone(&notify);
-        let ended_state = Arc::clone(&state);
-        let ended_interrupted = Arc::clone(&interrupted);
-        tokio::spawn(async move {
-            spirc_task.await;
-            {
-                let mut current = ended_state.lock().unwrap_or_else(|p| p.into_inner());
-                // Kept before the state is marked stopped, so a reconnect
-                // knows what to pick up.
-                *ended_interrupted.lock().unwrap_or_else(|p| p.into_inner()) =
-                    current.interrupted();
-                current.connected = false;
-                current.playback = Playback::Stopped;
-                current.position_at = None;
-                ended_notify(EngineEvent::State(current.clone()));
-            }
-            if !ended_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                ended_notify(EngineEvent::SessionEnded);
-            }
-        });
+        tokio::spawn(end_session(
+            spirc_task,
+            Arc::clone(&state),
+            Arc::clone(&interrupted),
+            Arc::clone(&shutting_down),
+            Arc::clone(&notify),
+        ));
 
         Ok(Self {
-            player,
-            spirc: Arc::new(spirc),
+            driver: Driver::Librespot {
+                player,
+                spirc: Arc::new(spirc),
+            },
             session,
             mixer,
             device_id,
+            state,
+            interrupted,
+            shutting_down,
+            audio,
+        })
+    }
+
+    /// Starts Spotify Soloist as this computer's Connect device. The
+    /// librespot session logs in without Spirc, so it serves reads and
+    /// Connect commands without showing up as a second device.
+    async fn connect_soloist(
+        config: &EngineConfig,
+        soloist: &crate::soloist::Config,
+        parts: Parts,
+        credentials: Credentials,
+        notify: Notify,
+    ) -> Result<Self> {
+        let Parts {
+            session,
+            mixer,
+            state,
+            audio,
+            sink,
+        } = parts;
+        session
+            .connect(credentials.clone(), true)
+            .await
+            .context("unable to connect to Spotify")?;
+        // The reusable grant the session stored, which Soloist logs in with
+        // when it has no account yet.
+        let reusable = session
+            .cache()
+            .and_then(|cache| cache.credentials())
+            .unwrap_or(credentials);
+        let pairing = crate::zeroconf::Credentials::from_playback(&reusable).ok();
+        state.lock().unwrap_or_else(|p| p.into_inner()).username = session.username();
+        let started = crate::soloist::Soloist::start(crate::soloist::Start {
+            config: soloist.clone(),
+            proxy: config.proxy.clone(),
+            device_name: config.device_name.clone(),
+            initial_volume: config.initial_volume,
+            sink,
+            mixer: Arc::clone(&mixer),
+            held_ms: held_ms(config),
+            shared: crate::soloist::Shared {
+                state: Arc::clone(&state),
+                notify: Arc::clone(&notify),
+                audio: Arc::clone(&audio),
+            },
+            pairing,
+        })
+        .await;
+        let soloist = match started {
+            Ok(soloist) => Arc::new(soloist),
+            Err(error) => {
+                session.shutdown();
+                return Err(error);
+            }
+        };
+        notify(EngineEvent::State(
+            state.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+        ));
+
+        let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let interrupted: Arc<Mutex<Option<Interrupted>>> = Arc::default();
+        let ended = soloist.on_end();
+        let watched = session.clone();
+        let gone = async move {
+            let session_lost = async {
+                let mut check = tokio::time::interval(SESSION_CHECK);
+                check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    check.tick().await;
+                    if watched.is_invalid() {
+                        log::info!("soloist: the librespot session ended");
+                        return;
+                    }
+                }
+            };
+            tokio::select! {
+                () = ended => {}
+                () = session_lost => {}
+            }
+        };
+        tokio::spawn(end_session(
+            gone,
+            Arc::clone(&state),
+            Arc::clone(&interrupted),
+            Arc::clone(&shutting_down),
+            Arc::clone(&notify),
+        ));
+
+        Ok(Self {
+            device_id: soloist.device_id().to_string(),
+            driver: Driver::Soloist(soloist),
+            session,
+            mixer,
             state,
             interrupted,
             shutting_down,
@@ -484,7 +592,12 @@ impl Engine {
         self.mixer.set_volume(volume);
         self.state.lock().unwrap_or_else(|p| p.into_inner()).volume = volume;
         if !preview {
-            self.spirc.set_volume(volume)?;
+            match &self.driver {
+                Driver::Librespot { spirc, .. } => spirc.set_volume(volume)?,
+                Driver::Soloist(soloist) => soloist.send(crate::soloist::Command::Volume(
+                    crate::soloist::percent(volume),
+                ))?,
+            }
         }
         Ok(())
     }
@@ -559,12 +672,22 @@ impl Engine {
     pub fn shutdown(&self) {
         self.shutting_down
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let _ = self.spirc.shutdown();
-        self.player.stop();
+        match &self.driver {
+            Driver::Librespot { player, spirc } => {
+                let _ = spirc.shutdown();
+                player.stop();
+            }
+            Driver::Soloist(soloist) => {
+                soloist.shutdown();
+                self.session.shutdown();
+            }
+        }
     }
 
     pub fn resume_point(&self) -> Option<PlaybackResume> {
-        if let Some(snapshot) = self.spirc.disconnected_playback() {
+        if let Driver::Librespot { spirc, .. } = &self.driver
+            && let Some(snapshot) = spirc.disconnected_playback()
+        {
             return Some(PlaybackResume::Session(snapshot));
         }
         self.interrupted().map(|interrupted| {
@@ -579,9 +702,12 @@ impl Engine {
 
     pub fn resume(&self, resume: PlaybackResume) -> Result<()> {
         match resume {
-            PlaybackResume::Session(snapshot) => {
-                self.spirc.restore_playback(snapshot).map_err(Into::into)
-            }
+            PlaybackResume::Session(snapshot) => match &self.driver {
+                Driver::Librespot { spirc, .. } => {
+                    spirc.restore_playback(snapshot).map_err(Into::into)
+                }
+                Driver::Soloist(_) => Err(anyhow!("Soloist cannot restore a librespot session")),
+            },
             PlaybackResume::Track(spec) => self.command(PlayerCommand::Load(spec)),
         }
     }
@@ -602,7 +728,10 @@ impl Engine {
     }
 
     fn send_command(&self, command: PlayerCommand) -> Result<()> {
-        let spirc = &self.spirc;
+        let spirc = match &self.driver {
+            Driver::Librespot { spirc, .. } => spirc,
+            Driver::Soloist(soloist) => return self.soloist_command(soloist, command),
+        };
         match command {
             PlayerCommand::Toggle => spirc.play_pause()?,
             PlayerCommand::Next => spirc.next()?,
@@ -657,6 +786,148 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+impl Engine {
+    /// Plays a command on Soloist: through its local API where it has one,
+    /// otherwise as a Connect command over the librespot session.
+    fn soloist_command(
+        &self,
+        soloist: &Arc<crate::soloist::Soloist>,
+        command: PlayerCommand,
+    ) -> Result<()> {
+        use crate::soloist::Command as Local;
+        match command {
+            PlayerCommand::Toggle => {
+                let playing = matches!(
+                    self.state
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .playback,
+                    Playback::Playing | Playback::Loading
+                );
+                soloist.send(if playing {
+                    Local::Pause
+                } else {
+                    Local::Play(None)
+                })
+            }
+            PlayerCommand::Next => soloist.send(Local::Next),
+            PlayerCommand::Previous => soloist.send(Local::Previous),
+            PlayerCommand::Seek(position_ms) => soloist.send(Local::Seek(position_ms)),
+            PlayerCommand::Volume(volume) => self.note_volume(volume, false),
+            PlayerCommand::VolumePreview(volume) => self.note_volume(volume, true),
+            PlayerCommand::Shuffle(enabled) => soloist.send(Local::Shuffle(enabled)),
+            PlayerCommand::Repeat(mode) => soloist.send(Local::Repeat(mode)),
+            PlayerCommand::AddToQueue(uri) if uri.starts_with("spotify:track:") => {
+                soloist.send(Local::AddToQueue(uri))
+            }
+            PlayerCommand::AddToQueue(uri) => {
+                let body = crate::soloist::connect::add_to_queue_command(&uri);
+                self.soloist_remote(soloist, move |session, device| async move {
+                    crate::soloist::connect::command(&session, &device, &body).await
+                });
+                Ok(())
+            }
+            PlayerCommand::ClearQueue => Err(anyhow!(
+                "Lossless playback cannot clear the queue; skip the songs instead"
+            )),
+            // Soloist takes over what plays elsewhere, queue and position
+            // included.
+            PlayerCommand::Transfer => soloist.send(Local::Activate),
+            // Soloist goes on with Spotify's autoplay itself when a list ends.
+            PlayerCommand::Load(spec) if spec.autoplay => Ok(()),
+            PlayerCommand::Load(spec) => {
+                if let Some(uri) = crate::soloist::connect::simple_play(&spec) {
+                    return soloist.send(Local::Play(Some(uri)));
+                }
+                let repeat = self.state.lock().unwrap_or_else(|p| p.into_inner()).repeat;
+                let body = crate::soloist::connect::play_command(&spec, repeat)?;
+                self.soloist_remote(soloist, move |session, device| async move {
+                    crate::soloist::connect::command(&session, &device, &body).await
+                });
+                Ok(())
+            }
+        }
+    }
+
+    /// Runs a Connect request for Soloist in the background; a failure
+    /// reopens the audio a skip closed and shows on the player.
+    fn soloist_remote<F, Fut>(&self, soloist: &crate::soloist::Soloist, request: F)
+    where
+        F: FnOnce(Session, String) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<()>> + Send,
+    {
+        let session = self.session.clone();
+        let device = soloist.device_id().to_string();
+        let audio = Arc::clone(&self.audio);
+        let state = Arc::clone(&self.state);
+        let report = soloist.report();
+        tokio::spawn(async move {
+            if let Err(error) = request(session, device).await {
+                log::warn!("soloist: {error:#}");
+                audio.stopped();
+                let snapshot = {
+                    let mut current = state.lock().unwrap_or_else(|p| p.into_inner());
+                    current.error = Some(error.to_string());
+                    current.loading = false;
+                    current.clone()
+                };
+                report(EngineEvent::State(snapshot));
+            }
+        });
+    }
+}
+
+/// librespot's soft volume with a cubic curve.
+fn soft_mixer() -> Result<Arc<dyn Mixer>> {
+    let mixer_builder =
+        mixer::find(Some("softvol")).ok_or_else(|| anyhow!("soft volume mixer missing"))?;
+    // librespot's default curve spans 60 dB logarithmically, which puts
+    // half the slider below -30 dB and every level anyone wants in its
+    // top quarter. The cubic curve reaches -16 dB at the middle and -7 dB
+    // at three quarters, spreading the useful range across the slider.
+    mixer_builder(MixerConfig {
+        volume_ctrl: VolumeCtrl::Cubic(VolumeCtrl::DEFAULT_DB_RANGE),
+        ..MixerConfig::default()
+    })
+    .context("unable to create the mixer")
+}
+
+/// Waits for the session to end, keeps what was playing for a reconnect,
+/// and asks for one unless the engine is being shut down.
+async fn end_session(
+    ended: impl std::future::Future<Output = ()>,
+    state: Arc<Mutex<LocalState>>,
+    interrupted: Arc<Mutex<Option<Interrupted>>>,
+    shutting_down: Arc<std::sync::atomic::AtomicBool>,
+    notify: Notify,
+) {
+    ended.await;
+    {
+        let mut current = state.lock().unwrap_or_else(|p| p.into_inner());
+        // Kept before the state is marked stopped, so a reconnect
+        // knows what to pick up.
+        *interrupted.lock().unwrap_or_else(|p| p.into_inner()) = current.interrupted();
+        current.connected = false;
+        current.playback = Playback::Stopped;
+        current.position_at = None;
+        notify(EngineEvent::State(current.clone()));
+    }
+    if !shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+        notify(EngineEvent::SessionEnded);
+    }
+}
+
+/// Audio the output still holds when a write of Soloist's audio returns:
+/// the output queue, a little over a dozen of the shim's 10 ms blocks, and
+/// the device's buffer. Soloist adds it to the position it reports.
+fn held_ms(config: &EngineConfig) -> u32 {
+    let device = config.buffer_ms.clamp(
+        *crate::sink::BUFFER_MS_RANGE.start(),
+        *crate::sink::BUFFER_MS_RANGE.end(),
+    );
+    130 + device
 }
 
 fn command_interrupts_audio(state: &LocalState, command: &PlayerCommand) -> bool {
@@ -1657,6 +1928,7 @@ mod tests {
             audio_cache_dir: None,
             audio_cache_limit: None,
             proxy: crate::settings::ProxyConfig::Off,
+            soloist: None,
         };
         let id = config.device_id();
         assert_eq!(id.len(), 40);

@@ -455,6 +455,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let apply_playback = gettext(locale, "Apply and restart playback");
     let apply_playback_note = gettext(locale, "Restart local playback to apply these settings.");
     let download_updates = gettext(locale, "Download updates automatically");
+    let lossless = gettext(locale, "Lossless playback");
+    let soloist_key = gettext(locale, "Soloist client key");
     let playback_rows = [
         RowText::new(
             // Translators: {status} is a playback state such as Ready or Not set up.
@@ -536,6 +538,30 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ),
         )
         .when(cfg!(target_os = "macos")),
+        RowText::new(
+            lossless.clone(),
+            if cfg!(windows) {
+                gettext(
+                    locale,
+                    "Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in Windows Subsystem for Linux.",
+                )
+            } else {
+                gettext(
+                    locale,
+                    "Plays through Spotify Soloist, in FLAC when your plan has lossless.",
+                )
+            },
+        )
+        .when(crate::soloist::AVAILABLE),
+        RowText::new(
+            soloist_key.clone(),
+            if app.soloist_key_saved == Some(true) {
+                gettext(locale, "Saved in the system's protected storage.")
+            } else {
+                gettext(locale, "The key Spotify issued for Soloist.")
+            },
+        )
+        .when(crate::soloist::AVAILABLE && app.settings.lossless),
     ];
     if section_matches(&needle, &playback, &playback_rows) {
         any_visible = true;
@@ -781,6 +807,56 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             }
                         }
                     }
+                });
+            });
+            filtered_row(ui, &palette, &needle, &playback, &playback_rows[15], |ui| {
+                if widgets::switch(ui, &palette, &lossless, &mut app.settings.lossless).changed() {
+                    changed = true;
+                    playback_dirty = true;
+                    if app.settings.lossless && app.soloist_key_saved.is_none() {
+                        app.actions.push(Action::CheckSoloistKey);
+                    }
+                }
+            });
+            filtered_row(ui, &palette, &needle, &playback, &playback_rows[16], |ui| {
+                // Laid right to left: the buttons first, then the field.
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let typed = !app.soloist_key_input.trim().is_empty();
+                    if theme::soft_button(ui, &palette, None, &gettext(locale, "Save"), false)
+                        .clicked()
+                        && typed
+                    {
+                        app.actions.push(Action::SaveSoloistKey);
+                    }
+                    if app.soloist_key_saved == Some(true)
+                        && !typed
+                        && theme::soft_button(ui, &palette, None, &gettext(locale, "Remove"), false)
+                            .clicked()
+                    {
+                        app.actions.push(Action::SaveSoloistKey);
+                    }
+                    let hint = if app.soloist_key_saved == Some(true) {
+                        gettext(locale, "Replace the saved key")
+                    } else {
+                        gettext(locale, "Paste the key")
+                    };
+                    Frame::new()
+                        .fill(palette.surface)
+                        .corner_radius(CornerRadius::same(6))
+                        .inner_margin(Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            widgets::text_edit(
+                                ui,
+                                locale,
+                                egui::TextEdit::singleline(&mut app.soloist_key_input)
+                                    .password(true)
+                                    .hint_text(hint.as_ref())
+                                    .font(theme::regular(14.0))
+                                    .frame(egui::Frame::NONE)
+                                    .desired_width(180.0),
+                            )
+                        });
                 });
             });
             ui.add_space(4.0);
