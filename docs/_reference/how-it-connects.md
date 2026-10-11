@@ -390,6 +390,39 @@ name is sent through CONNECT, and a proxy failure never falls back to a
 direct connection. Proxy URLs and credentials are not logged by this
 connector. The change adds no destination or background polling.
 
+## Lossless playback through Soloist
+
+With Settings → Playback → Lossless playback on, Spotify Soloist plays
+instead of librespot's player. Soloist is Spotify's own Connect receiver for
+Linux, and Spotify gives it FLAC on plans that include lossless. It needs a
+client key Spotify issues for it; Spotifast keeps the key in the system
+credential store and passes it to Soloist on start.
+
+- Spotifast downloads Soloist from `soloist-builds.spotifycdn.com` on first
+  use, checks once a day whether a newer build is published, and replaces a
+  build before its 90-day lifetime ends.
+- Soloist runs as a child process and listens on loopback only: a WebSocket
+  API Spotifast drives it through, and a pairing endpoint Spotifast uses
+  once to hand it the playback account. It talks to Spotify itself, through
+  the same proxy rules as the rest of the system.
+- Its audio comes back through `soloist/shim`, a stand-in `libpulse.so.0`
+  that sends the stream over a loopback TCP port into Spotifast's own
+  output, so the equalizer, visualisers, volume and output device behave as
+  with librespot. Flow control follows the output device's clock. The
+  shim also provides the `libatomic.so.1` Soloist links, so the system needs
+  neither library.
+- The librespot session stays signed in without its Connect device. It
+  serves lyrics, playlists and metadata, and sends the Connect commands
+  Soloist's API lacks, such as starting a playlist at a given song.
+- On Windows, Soloist runs in a WSL1 distribution of its own,
+  `Spotifast-Soloist`, which holds only glibc, taken from Debian's official
+  image on Docker Hub (`auth.docker.io`, `registry-1.docker.io`, checked
+  against its digest), and the certificates Windows trusts. WSL must be
+  turned on once, as an administrator, followed by a restart:
+  `dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart`.
+
+Clearing the queue is not available while lossless playback is on.
+
 ## Proxy
 
 Since 0.9.0, Settings → Proxy has four modes:

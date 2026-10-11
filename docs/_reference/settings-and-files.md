@@ -21,6 +21,8 @@ Spotifast follows each platform's conventions. On Linux:
 | Legacy personal Web API grant | `~/.local/state/spotifast/personal_web_api_token.json` | Removed after migration or sign-out |
 | Legacy playback credential | `~/.local/state/spotifast/credentials/` | Removed after migration or sign-out |
 | Proxy password | System credential store | Clear the password and apply the manual proxy settings |
+| Soloist client key | System credential store | Remove it in Settings → Playback |
+| Spotify Soloist, its libraries and its data | `~/.local/state/spotifast/soloist/` | Yes while lossless is off; Soloist downloads again and asks for no new sign-in |
 | Legacy proxy password | `~/.local/state/spotifast/proxy_password` | Removed after protected migration |
 | Last session | `~/.local/state/spotifast/session.json` | Yes |
 | Play history | `~/.local/state/spotifast/history.json` | Yes |
@@ -230,6 +232,7 @@ main fields are:
 | `gapless` | `true` | Gapless playback |
 | `audio_backend` | platform | `pulseaudio` or `rodio` on Linux. `rodio` is Spotifast's own output, through ALSA; librespot's separate rodio backend is no longer built in, and a backend this build lacks plays through Spotifast's own output |
 | `audio_cache_mb` | `1024` | On-disk audio cache budget |
+| `lossless` | `false` | Play through Spotify Soloist, in FLAC when the plan has lossless. Linux and Windows on x86_64 |
 | `theme` | `system` | Follow the system appearance by default; explicit `dark` and `light` choices remain available |
 | `language` | `system` | Since 0.10.0: the interface language. `system` follows the operating system's preferred languages and falls back to English; a tag such as `es`, `de-DE`, `pt-BR` or `zh-Hant` selects that language. An unknown tag follows the system |
 | `custom_theme` | `null` | Selected JSON filename from the `themes` folder |

@@ -5,6 +5,12 @@ These instructions add implementation constraints for coding agents.
 
 ## Product boundaries
 
+This repository is a private fork whose purpose is lossless playback through
+Spotify Soloist (`src/soloist/`, `soloist/shim/`). Soloist is the one
+sanctioned player besides librespot; the boundaries below hold for
+everything else. Read the Soloist section of
+`docs/_reference/how-it-connects.md` before changing it.
+
 - Keep Spotifast a small native Spotify client. Do not add a browser engine,
   telemetry, a hosted backend, or alternate sources for Spotify audio.
 - Playback capabilities come from librespot. Do not advertise or implement a
