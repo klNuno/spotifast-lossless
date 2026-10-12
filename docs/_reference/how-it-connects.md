@@ -76,7 +76,12 @@ signing in again.
 
 By default, Spotifast uses the public app shared with spotify-player, ncspot,
 and Omarchy Spotify. Spotify divides its quota among all users. A personal app
-adds a separate Development Mode quota. See
+adds a separate Development Mode quota. Playback state is checked every 15
+seconds, every 20 while this computer's player is active, every 30 while the
+window cannot be seen and nothing plays, every 4 while the window is visible
+for ten seconds after a command or a switch to another device, once more
+just after a song on another device should end, and as soon as this computer's
+player stops. See
 [Use a Personal Spotify App](/make-it-even-faster/).
 
 Since 0.8.0, a search runs as two requests when a

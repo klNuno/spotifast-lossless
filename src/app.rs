@@ -32,9 +32,16 @@ use fastframe_now_playing::{
 
 const REMOTE_POLL_ACTIVE: Duration = Duration::from_secs(4);
 const REMOTE_POLL_IDLE: Duration = Duration::from_secs(20);
+/// The shortest regular gap between playback polls, which spend the Web API
+/// quota.
+const REMOTE_POLL_MIN: Duration = Duration::from_secs(15);
+/// How long after a command to another device, or a switch to one, polls are
+/// not held to `REMOTE_POLL_MIN`, so the result is confirmed before the
+/// optimistic holds run out.
+const REMOTE_COMMAND_WINDOW: Duration = Duration::from_secs(10);
 /// With nobody able to see the window and nothing playing anywhere.
 const REMOTE_POLL_UNSEEN: Duration = Duration::from_secs(30);
-const REMOTE_FRESH: Duration = Duration::from_secs(45);
+const REMOTE_FRESH: Duration = Duration::from_secs(60);
 const DEVICES_FRESH: Duration = Duration::from_secs(12);
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(280);
 /// How old the saved resume point may grow while music plays.
@@ -335,6 +342,11 @@ pub struct App {
     pub remote: Option<RemoteSnapshot>,
     remote_polled_at: Instant,
     remote_poll_pending: bool,
+    /// When a poll last went out early for the end of a song on another
+    /// device.
+    remote_end_polled_at: Option<Instant>,
+    /// When another device last accepted a command or a switch from here.
+    remote_command_at: Option<Instant>,
     /// Serial of the newest playback poll sent; older answers are stale.
     remote_poll_seq: u64,
     /// The restorable session (sorts, recents, resume point) changed and
@@ -842,6 +854,8 @@ impl App {
             remote: None,
             remote_polled_at: Instant::now() - REMOTE_POLL_UNSEEN,
             remote_poll_pending: false,
+            remote_end_polled_at: None,
+            remote_command_at: None,
             remote_poll_seq: 0,
             session_dirty: false,
             last_session_save: Instant::now(),
@@ -2558,6 +2572,11 @@ impl App {
                 ..LoadSpec::default()
             }));
         }
+        // Another device may have taken over while the last poll still
+        // names this one.
+        if self.local.is_active() && !state.is_active() {
+            self.poll_remote_soon();
+        }
         self.local = state;
         if let Some(volume) = held_volume {
             self.local.volume = volume;
@@ -3062,10 +3081,7 @@ impl App {
         }
 
         if self.is_connected() && !self.offline {
-            let interval = self.connected_repaint_interval();
-            if !self.remote_poll_pending && self.remote_polled_at.elapsed() >= interval {
-                self.poll_remote(false);
-            }
+            self.poll_remote_if_due();
             if let Some(due) = self.remote_recheck_at
                 && Instant::now() >= due
             {
@@ -6866,6 +6882,7 @@ impl App {
                 match result {
                     Ok(()) => {
                         self.remote_recheck_at = Some(Instant::now() + REMOTE_RECHECK);
+                        self.remote_command_at = Some(Instant::now());
                         if action == RemoteAction::Shuffle {
                             self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
                             if let Some(pending) = &mut self.queue_shuffle_pending {
@@ -6910,6 +6927,7 @@ impl App {
                 Ok(()) => {
                     self.selected_device = Some(device_id);
                     self.show_devices = false;
+                    self.remote_command_at = Some(Instant::now());
                     self.poll_remote_soon();
                     self.refresh_devices();
                 }
@@ -10750,6 +10768,9 @@ impl App {
     ///
     /// With nobody able to see the window and nothing playing anywhere, the
     /// poll only keeps a hidden device list fresh, so it runs every 30s.
+    ///
+    /// Playback polls start from this interval too, but outside a command
+    /// window they go out no more often than `REMOTE_POLL_MIN`.
     fn connected_repaint_interval(&self) -> Duration {
         let unseen = self.budget == crate::power::Budget::Background
             && !self.now_playing().is_some_and(|now| now.playing);
@@ -10758,6 +10779,68 @@ impl App {
             _ if unseen => REMOTE_POLL_UNSEEN,
             _ => REMOTE_POLL_ACTIVE,
         }
+    }
+
+    /// The regular gap between playback polls: never shorter than
+    /// `REMOTE_POLL_MIN`, except within `REMOTE_COMMAND_WINDOW` of a command
+    /// or a switch to another device.
+    fn regular_poll_interval(&self) -> Duration {
+        let floor = if self
+            .remote_command_at
+            .is_some_and(|at| at.elapsed() < REMOTE_COMMAND_WINDOW)
+        {
+            Duration::ZERO
+        } else {
+            REMOTE_POLL_MIN
+        };
+        self.connected_repaint_interval().max(floor)
+    }
+
+    /// How long after the last playback poll the next one is due, and
+    /// whether that is early for the end of a song on another device.
+    fn remote_poll_interval(&self) -> (Duration, bool) {
+        let interval = self.regular_poll_interval();
+        match self.remote_song_end() {
+            Some(end) if end < interval => (end, true),
+            _ => (interval, false),
+        }
+    }
+
+    fn poll_remote_if_due(&mut self) {
+        let (interval, song_end) = self.remote_poll_interval();
+        let elapsed = self.remote_polled_at.elapsed();
+        if self.remote_poll_pending || elapsed < interval {
+            return;
+        }
+        if song_end && elapsed < self.regular_poll_interval() {
+            self.remote_end_polled_at = Some(Instant::now());
+        }
+        self.poll_remote(false);
+    }
+
+    /// A second after the song playing on another device should be over,
+    /// counted from the last poll. At most one early poll goes out for it
+    /// every `REMOTE_POLL_MIN`.
+    fn remote_song_end(&self) -> Option<Duration> {
+        if matches!(self.target(), Target::Local)
+            || self
+                .remote_end_polled_at
+                .is_some_and(|at| at.elapsed() < REMOTE_POLL_MIN)
+        {
+            return None;
+        }
+        let remote = self
+            .remote_fresh()
+            .filter(|remote| remote.state.is_playing)?;
+        let left = remote
+            .state
+            .item
+            .as_ref()?
+            .duration_ms()
+            .checked_sub(remote.state.progress_ms?)
+            .filter(|left| *left > 0)?;
+        let due = remote.received_at + Duration::from_millis(left.into()) + Duration::from_secs(1);
+        due.checked_duration_since(self.remote_polled_at)
     }
 
     /// Persist state when a window closes (to the tray or for good).
@@ -19828,9 +19911,190 @@ mod tests {
         app.budget = crate::power::Budget::Background;
         app.poll_remote_soon();
         let due_in = app
-            .connected_repaint_interval()
+            .remote_poll_interval()
+            .0
             .saturating_sub(app.remote_polled_at.elapsed());
         assert!(due_in <= Duration::from_millis(700), "due in {due_in:?}");
+    }
+
+    /// Playback polls, which spend the Web API quota, run at most every 15s
+    /// even while the logic wakes more often.
+    #[test]
+    fn playback_polls_run_at_most_every_fifteen_seconds() {
+        let mut app = headless_app();
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_MIN, false));
+        app.budget = crate::power::Budget::Background;
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_UNSEEN, false));
+        app.selected_device = Some("phone".into());
+        app.remote = Some(RemoteSnapshot {
+            state: PlaybackState {
+                is_playing: true,
+                item: Some(queued_song("spotify:track:a")),
+                ..Default::default()
+            },
+            received_at: Instant::now(),
+        });
+        assert_eq!(app.connected_repaint_interval(), REMOTE_POLL_ACTIVE);
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_MIN, false));
+        app.selected_device = None;
+        app.remote = None;
+        app.local.track = Some(crate::player::LocalTrack {
+            uri: "spotify:track:a".into(),
+            ..Default::default()
+        });
+        app.local.playback = Playback::Paused;
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_IDLE, false));
+    }
+
+    /// A command or switch another device accepted keeps the usual pace for a
+    /// while, so a lagging answer is checked again before the optimistic hold
+    /// ends. A refused command does not.
+    #[test]
+    fn a_remote_command_keeps_the_usual_poll_pace_for_a_while() {
+        let mut app = headless_app();
+        app.auth = AuthStatus::Connected {
+            username: "alice".into(),
+        };
+        app.selected_device = Some("phone".into());
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_MIN, false));
+
+        app.handle_api(ApiResponse::Remote {
+            action: RemoteAction::Pause,
+            result: Err(crate::api::ApiError::RateLimited),
+        });
+        app.handle_api(ApiResponse::Transferred {
+            device_id: "phone".into(),
+            result: Err(crate::api::ApiError::RateLimited),
+        });
+        assert!(app.remote_command_at.is_none());
+
+        app.handle_api(ApiResponse::Remote {
+            action: RemoteAction::Pause,
+            result: Ok(()),
+        });
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_ACTIVE, false));
+        app.remote_polled_at = Instant::now() - Duration::from_millis(4_100);
+        app.poll_remote_if_due();
+        assert!(app.remote_poll_pending, "polled at the usual pace");
+
+        app.remote_poll_pending = false;
+        app.remote_polled_at = Instant::now() - Duration::from_millis(4_100);
+        app.remote_command_at = Some(Instant::now() - REMOTE_COMMAND_WINDOW);
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_MIN, false));
+        app.poll_remote_if_due();
+        assert!(!app.remote_poll_pending, "back to 15s once the window ends");
+
+        app.handle_api(ApiResponse::Transferred {
+            device_id: "phone".into(),
+            result: Ok(()),
+        });
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_ACTIVE, false));
+    }
+
+    /// A song on another device is polled again a second after it should
+    /// end. An answer that still reports it, a moment from its end, does not
+    /// bring another early poll within 15s.
+    #[test]
+    fn a_remote_song_end_is_polled_early_once() {
+        let mut app = headless_app();
+        app.auth = AuthStatus::Connected {
+            username: "alice".into(),
+        };
+        app.selected_device = Some("phone".into());
+        let song = |progress_ms, received_at| RemoteSnapshot {
+            state: PlaybackState {
+                is_playing: true,
+                progress_ms: Some(progress_ms),
+                item: Some(crate::api::models::PlayableItem::Track(
+                    crate::api::models::Track {
+                        uri: "spotify:track:a".into(),
+                        duration_ms: 180_000,
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            received_at,
+        };
+        let now = Instant::now();
+        app.remote_polled_at = now;
+        app.remote = Some(song(175_000, now));
+        assert_eq!(app.remote_poll_interval(), (Duration::from_secs(6), true));
+
+        let late = Instant::now() - Duration::from_secs(16);
+        app.remote_polled_at = late;
+        app.remote = Some(song(175_000, late));
+        app.poll_remote_if_due();
+        assert!(app.remote_poll_pending, "the regular poll is due");
+        assert!(
+            app.remote_end_polled_at.is_none(),
+            "a late regular poll is not the early one"
+        );
+        app.remote_poll_pending = false;
+
+        let earlier = Instant::now() - Duration::from_secs(7);
+        app.remote_polled_at = earlier;
+        app.remote = Some(song(175_000, earlier));
+        app.poll_remote_if_due();
+        assert!(app.remote_poll_pending, "the song's end is polled");
+        assert!(app.remote_end_polled_at.is_some());
+
+        let earlier = Instant::now() - Duration::from_secs(2);
+        app.remote_poll_pending = false;
+        app.remote_polled_at = earlier;
+        app.remote = Some(song(179_500, earlier));
+        app.poll_remote_if_due();
+        assert!(!app.remote_poll_pending, "no second early poll");
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_MIN, false));
+
+        app.remote_end_polled_at = None;
+        app.remote.as_mut().unwrap().state.is_playing = false;
+        assert_eq!(app.remote_poll_interval(), (REMOTE_POLL_MIN, false));
+    }
+
+    /// Another device taking over stops this computer while the last poll
+    /// still names it, so playback is polled again at once: otherwise Play
+    /// would pull the music back from the other device.
+    #[test]
+    fn a_takeover_by_another_device_is_polled_at_once() {
+        let mut app = headless_app();
+        app.auth = AuthStatus::Connected {
+            username: "alice".into(),
+        };
+        app.local_ready = true;
+        app.local_device_id = Some("this-computer".into());
+        let playing = LocalState {
+            connected: true,
+            playback: Playback::Playing,
+            track: Some(crate::player::LocalTrack {
+                uri: "spotify:track:a".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        app.local = playing.clone();
+        app.remote = Some(RemoteSnapshot {
+            state: PlaybackState {
+                is_playing: true,
+                item: Some(queued_song("spotify:track:a")),
+                device: Some(crate::api::models::Device {
+                    id: Some("this-computer".into()),
+                    is_active: true,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            received_at: Instant::now(),
+        });
+        app.remote_polled_at = Instant::now();
+
+        app.handle_local(LocalState {
+            playback: Playback::Stopped,
+            ..playing
+        });
+        assert!(matches!(app.target(), Target::Local));
+        app.poll_remote_if_due();
+        assert!(app.remote_poll_pending, "polled at once");
     }
 
     #[test]
