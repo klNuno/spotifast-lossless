@@ -69,10 +69,17 @@ https://github.com/user-attachments/assets/a5f669ce-b3b7-4f8e-9933-976a78876c7e
 | **Other Linux** | Find Flatpak, AppImage, Nix, and other options on the [Download page](https://spotifast.rocks/download/). |
 | **From source** | Follow [Build from source](https://spotifast.rocks/getting-started/#build-from-source) for dependencies and commands. |
 
-When uninstalling on Windows, an in-use installed executable (`spotifast.exe`)
-prompts **Retry**, **Close Spotifast**, or **Cancel** before any files are removed.
-**Close Spotifast** ends the installed process immediately; unsaved changes may
-be lost. In this case, silent uninstall exits without removing files.
+On Windows, releases after 0.12.0 come as a Windows Installer package (`.msi`)
+that needs no administrator password. Spotifast installed with the earlier
+setup program (`-setup.exe`) moves to it through its own updates and keeps its
+settings.
+
+Uninstalling while the installed `spotifast.exe` runs removes nothing until it
+is closed. The installer asks whether to close it (**Yes**), check again once
+you have quit it (**No**), or **Cancel**; the earlier setup program offers
+**Retry**, **Close Spotifast**, or **Cancel**. Closing ends the installed process
+immediately; unsaved changes may be lost. A silent uninstall stops without
+removing files.
 
 ## Start listening
 
