@@ -162,6 +162,12 @@
         <File Id="InstallerMarker" Source="$(Payload)\spotifast-installer.txt" KeyPath="no" />
         <RegistryValue Root="HKCU" Key="$(InstallerKey)" Name="InstallFolder" Type="string"
           Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <!--
+          Only an empty folder goes. fastframe-update stages its helper and
+          the previous version in .spotifast-update-* inside this folder
+          while it runs the package, so never remove the folder's contents
+          (no util:RemoveFolderEx here).
+        -->
         <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
 
         <!--
