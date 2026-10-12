@@ -29,7 +29,7 @@ Linux desktop assets beside its binaries and packages the signed macOS
 desktop hooks.
 
 ```sh
-gem install native-packages --version 0.8.1
+gem install native-packages --version 0.9.0
 native-packages validate
 native-packages doctor --target linux-amd64 --target linux-arm64
 native-packages build --release v1.2.3 --target linux-amd64 --target linux-arm64
@@ -101,7 +101,7 @@ Homebrew automation needs `PUBLISH_HOMEBREW=true` and
 The macOS target, Windows and Flatpak build steps remain responsible
 for their native artifacts. Additional nFPM formats require suitable platform
 inputs and dependencies; adding a format does not port the application.
-See the [shared CLI documentation](https://github.com/crmne/native-packages/tree/v0.8.1)
+See the [shared CLI documentation](https://github.com/crmne/native-packages/tree/v0.9.0)
 for commands and supported formats.
 
 The manual **Flatpak from release** workflow can rebuild a missing Flatpak from
@@ -141,7 +141,7 @@ secrets, which the job exposes as environment variables:
 A complete set enables notarization automatically. An incomplete set fails;
 no values retain local builds without Developer ID signing. Application inputs
 and the user's normal keychains remain unchanged. See the shared
-[Apple setup and phase contract](https://github.com/crmne/native-packages/blob/v0.8.1/docs/apple-notarization.md).
+[Apple setup and phase contract](https://github.com/crmne/native-packages/blob/v0.9.0/docs/apple-notarization.md).
 
 After preparing `dist/macos-input` on a Mac, test packaging without publishing:
 

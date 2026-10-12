@@ -175,7 +175,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Install native packaging
-        run: gem install native-packages --version 0.8.1 --no-document
+        run: gem install native-packages --version 0.9.0 --no-document
 
       - name: App bundle
         run: |
@@ -266,7 +266,7 @@ jobs:
         env:
           SPOTIFAST_UPDATE_SIGNING_KEY: ${{ secrets.SPOTIFAST_UPDATE_SIGNING_KEY }}
         run: |
-          gem install native-packages --version 0.8.1 --no-document
+          gem install native-packages --version 0.9.0 --no-document
           native-packages sign-checksums dist/checksums.txt \
             --public-key assets/update-public-key.hex \
             --key-env SPOTIFAST_UPDATE_SIGNING_KEY
