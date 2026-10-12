@@ -38,52 +38,52 @@ egui_extras = { version = "0.36", features = ["image", "svg"] }
 # The shared foundation of Spotifast, ZapFast, RekordFlash and TonePush
 # (crmne/fastframe). Every crate comes from the same revision; move them
 # together.
-fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
-fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
-fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
-fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
+fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
+fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
+fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # Colour emoji in the platform's own style (Apple Color Emoji, Segoe UI
 # Emoji, the desktop's colour emoji font), in every text through its egui
 # plugin.
-fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # Catalogs compiled from PO files at build time (see build.rs) and the
 # system's preferred languages. No libintl or runtime catalog parsing.
-fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # The log file for bug reports and the panic log (env_logger underneath).
-fastframe-log = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-log = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # The tray item, so closing the window can keep the music playing:
 # StatusNotifier on Linux, the notification area on Windows, the menu bar
 # on macOS.
-fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # Keeps the app running without a window around eframe::run_native.
-fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # The macOS title-bar double-click setting (does nothing elsewhere).
-fastframe-macos = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-macos = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # Self-update from GitHub releases, on the reqwest client below.
-fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0", features = ["reqwest"] }
+fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1", features = ["reqwest"] }
 # Settings, the session, the history, caches and the credential markers
 # are replaced whole: a temporary file beside each, synced to the disk, then
 # moved over it (written through on Windows), so a crash never leaves half.
-fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # The device's power, session and network state: energy saver, battery,
 # display, lock, the internet's reach and cost, sleep and wake, and the App
 # Nap activity local playback holds on macOS.
-fastframe-power = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-power = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # The audio device stream: it pauses, so a paused player costs no CPU (#636),
 # follows the default output and reopens after a failure. Its cpal 0.18
 # cannot share a build with the cpal 0.16 of librespot's rodio backend (both
 # link ALSA), so that backend is left out.
-fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # The wheel step, the Linux touchpad scale and glide, and the axis a scroll
 # gesture holds.
-fastframe-scroll = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-scroll = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # One running copy per user: a lock and a private channel that a second
 # launch and the command line hand their requests to.
-fastframe-instance = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-instance = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # The desktop's media controls: MPRIS on Linux, the media overlay on
 # Windows, Now Playing on macOS. The media keys and those panels send
 # commands back, and closing the window keeps the music playing.
-fastframe-now-playing = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-now-playing = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # Reading installed fonts for MilkDrop's overlays, the Winamp playlist's
 # pixel text, and the playlist face. skrifa is the parser epaint already
 # rasterizes with, and the version has to track epaint's or the binary
@@ -207,7 +207,7 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 # Whether the session is GNOME, and its window button layout and icon theme
 # read through the desktop portal (src/window.rs), which works inside a
 # Flatpak, where running gsettings does not.
-fastframe-desktop = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0" }
+fastframe-desktop = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1" }
 # Keeps the X11 mini player out of the taskbar with _NET_WM_STATE_SKIP_TASKBAR
 # (src/window.rs), which winit only offers on Windows. winit already
 # compiles this version.
@@ -216,7 +216,7 @@ x11rb = { version = "0.13", default-features = false }
 [build-dependencies]
 # Drops unfinished PO entries and compiles catalog text and gettext plural
 # expressions to Rust. Ordinary builds do not need gettext tools.
-fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.5.0", features = ["build"] }
+fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.5.1", features = ["build"] }
 
 [dev-dependencies]
 # Checks that every catalog covers the template and keeps its placeholders.
