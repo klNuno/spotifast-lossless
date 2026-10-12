@@ -8,3 +8,10 @@ LIBATOMIC_1.0 {
   local:
     *;
 };
+
+/* The version Soloist asks glibc for; see dirsync.c. */
+GLIBC_2.2.5 {
+  global:
+    fsync;
+    fdatasync;
+};

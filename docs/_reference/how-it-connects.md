@@ -410,7 +410,9 @@ credential store and passes it to Soloist on start.
   output, so the equalizer, visualisers, volume and output device behave as
   with librespot. Flow control follows the output device's clock. The
   shim also provides the `libatomic.so.1` Soloist links, so the system needs
-  neither library.
+  neither library. That one also answers Soloist's `fsync` calls: WSL1
+  refuses to sync a directory, which LevelDB does after each manifest, and
+  the shim reports that refusal as success.
 - The librespot session stays signed in without its Connect device. It
   serves lyrics, playlists and metadata, and sends the Connect commands
   Soloist's API lacks, such as starting a playlist at a given song.
