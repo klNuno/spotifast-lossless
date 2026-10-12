@@ -213,6 +213,11 @@ song details Spotify did not supply in full, hands the read to the Web API
 instead of caching rows without songs. A song Spotify no longer has, or
 withholds for legal reasons, is an empty row, as the Web API shows it.
 
+The playlist list and Made for you searches go through the shared app even
+when a personal app is set up. While the shared app waits out Spotify's
+limits, the sidebar and Home show what they last showed for the account,
+from the cache described in [Settings & Files](/settings-and-files/).
+
 Spotify can also explicitly refuse the key needed to decrypt a track. When
 that happens, Spotifast stops local playback and leaves the rest of the queue
 alone instead of treating every following track as unavailable. This refusal
