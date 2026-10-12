@@ -353,8 +353,6 @@ pub struct App {
     /// should be written shortly, not only at exit.
     pub session_dirty: bool,
     last_session_save: Instant,
-    /// The saved zoom has been applied to the context once.
-    zoom_applied: bool,
     /// Frames left to re-send the Winamp window's always-on-top level after the
     /// window opens. X11 window managers drop `_NET_WM_STATE_ABOVE` set before
     /// the window is mapped, so the creation-time level does not stick; a level
@@ -859,7 +857,6 @@ impl App {
             remote_poll_seq: 0,
             session_dirty: false,
             last_session_save: Instant::now(),
-            zoom_applied: false,
             winamp_level_reassert: 0,
             devices: Vec::new(),
             receivers: Vec::new(),
@@ -1095,9 +1092,6 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
             }
         }
-        // egui's memory, which carried the zoom from one window to the next,
-        // is not restored any more; each main window takes the saved zoom.
-        self.zoom_applied = false;
     }
 
     /// The window is gone but the process stays: audio, the tray, and the
@@ -3022,19 +3016,13 @@ impl App {
         // The zoom is the main window's: a pass without a window, or in the
         // mini player at its own scale, neither applies nor saves it.
         let main_window = !self.window_hidden && !self.settings.winamp_window;
-        if main_window && !self.zoom_applied {
-            self.zoom_applied = true;
-            let zoom = self.settings.zoom.clamp(0.5, 2.5);
-            if (zoom - 1.0).abs() > 0.001 {
-                ctx.set_zoom_factor(zoom);
-            }
-        } else if main_window {
-            let zoom = ctx.zoom_factor();
-            if (zoom - self.settings.zoom).abs() > 0.001 {
-                // Ctrl+plus/minus zoomed; remembered for the next start.
-                self.settings.zoom = zoom;
-                self.settings_dirty = true;
-            }
+        // Each new main window takes the saved zoom; Ctrl+plus/minus is
+        // remembered for the next start.
+        if main_window
+            && let Some(zoom) = fastframe_shell::window::keep_zoom(ctx, self.settings.zoom)
+        {
+            self.settings.zoom = zoom;
+            self.settings_dirty = true;
         }
         self.toasts
             .retain(|toast| toast.created.elapsed() < TOAST_LIFETIME);
