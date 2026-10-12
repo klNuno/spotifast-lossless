@@ -2,8 +2,9 @@
 # Builds the two libraries Spotifast gives Spotify Soloist, for x86_64
 # Linux: libpulse.so.0, the PulseAudio stand-in that hands its audio to
 # Spotifast, and libatomic.so.1, so no system copy is needed (it also
-# takes Soloist's fsync calls, see dirsync.c). CI rebuilds them and
-# compares the result with the committed libraries, so the two never drift.
+# takes Soloist's fsync and bind calls, see dirsync.c and loopback.c).
+# CI rebuilds them and compares the result with the committed libraries,
+# so the two never drift.
 #
 #   soloist/shim/build.sh                  build both into soloist/shim/
 #   PULSE_INCLUDE=/usr/include soloist/shim/build.sh
@@ -33,6 +34,6 @@ fi
 $CC $FLAGS $LINK -Wl,-soname,libpulse.so.0 -o libpulse.so.0 pulse-shim.c -lpthread -lm
 # shellcheck disable=SC2086
 $CC $FLAGS $LINK -Wl,-soname,libatomic.so.1 -Wl,--version-script=libatomic.map \
-    -o libatomic.so.1 libatomic.c dirsync.c -lpthread
+    -o libatomic.so.1 libatomic.c dirsync.c loopback.c -lpthread
 $STRIP --strip-unneeded libpulse.so.0 libatomic.so.1
 sha256sum libpulse.so.0 libatomic.so.1

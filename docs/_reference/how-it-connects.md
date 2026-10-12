@@ -410,9 +410,12 @@ credential store and passes it to Soloist on start.
   output, so the equalizer, visualisers, volume and output device behave as
   with librespot. Flow control follows the output device's clock. The
   shim also provides the `libatomic.so.1` Soloist links, so the system needs
-  neither library. That one also answers Soloist's `fsync` calls: WSL1
-  refuses to sync a directory, which LevelDB does after each manifest, and
-  the shim reports that refusal as success.
+  neither library. That one also answers two of Soloist's calls to the
+  system. `fsync` on a directory, which LevelDB makes after each manifest
+  and WSL1 refuses, reports success. `bind` puts Soloist's ZeroConf login
+  server and its mDNS socket on loopback: Soloist would otherwise accept
+  accounts from any device on the network and announce itself there, and
+  Windows would ask about it in a firewall prompt.
 - The librespot session stays signed in without its Connect device. It
   serves lyrics, playlists and metadata, and sends the Connect commands
   Soloist's API lacks, such as starting a playlist at a given song.
