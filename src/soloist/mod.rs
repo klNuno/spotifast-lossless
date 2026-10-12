@@ -426,10 +426,11 @@ fn prepare(_: &Path, _: &crate::settings::ProxyConfig) -> Result<Prepared> {
 /// Runs a real Soloist that is already paired, playing into a silent sink
 /// paced like an output device. Nothing is heard. Set `SOLOIST_LAB_DIR` to a
 /// Soloist folder whose `data` holds the paired account, and
-/// `SOLOIST_LAB_KEY_FILE` to a file holding the client key:
+/// `SOLOIST_LAB_KEY_FILE` to a file holding the client key. On Windows the
+/// folder is a Windows path and Soloist runs in its WSL distribution:
 ///
 /// `cargo test --lib soloist::lab -- --ignored --nocapture`
-#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(test, target_arch = "x86_64", any(target_os = "linux", windows)))]
 mod lab {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
@@ -576,11 +577,17 @@ mod lab {
         until("logged in", 10, || state(&shared).connected).await;
 
         soloist.send(Command::Play(Some(track.clone()))).unwrap();
-        until("playing", 20, || {
-            state(&shared).playback == Playback::Playing
+        // Soloist can report that it plays a moment before it names the
+        // track, so wait for both.
+        until("playing the track", 20, || {
+            let now = state(&shared);
+            now.playback == Playback::Playing
+                && now
+                    .track
+                    .as_ref()
+                    .is_some_and(|playing| playing.uri == track)
         })
         .await;
-        assert_eq!(state(&shared).track.map(|track| track.uri), Some(track));
         until("three seconds of audio", 20, || {
             heard.frames.load(Ordering::Relaxed) > 3 * 44_100
         })
