@@ -3,10 +3,12 @@
 //! WSL1 runs Linux programs as Windows processes, with no virtual machine,
 //! so Soloist costs about what it costs on Linux. The distribution holds
 //! only what Soloist cannot do without: glibc from Debian's official image,
-//! the CA certificates Windows trusts, and a few files in `/etc`. Soloist,
-//! the shim and Soloist's data stay in Spotifast's folder on the Windows
-//! side, reached through `/mnt`, so updating Soloist never touches the
-//! distribution.
+//! `mount` from the same image (WSL's init runs `/bin/mount` to put the
+//! Windows drives under `/mnt`), the CA certificates Windows trusts, and a
+//! few files in `/etc`. Soloist, the shim and Soloist's data stay in
+//! Spotifast's folder on the Windows side, reached through `/mnt`, so
+//! updating Soloist never touches the distribution and recreating the
+//! distribution keeps the signed-in account.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -25,7 +27,7 @@ use super::{Prepared, install, process};
 /// The distribution's name, as `wsl.exe` lists it.
 pub(crate) const DISTRO: &str = "Spotifast-Soloist";
 /// Bumped when the distribution's contents change, so it is rebuilt.
-const ROOTFS_VERSION: &str = "1";
+const ROOTFS_VERSION: &str = "2";
 /// Debian 13: glibc 2.41, newer than the 2.38 Soloist needs.
 const IMAGE: &str = "library/debian";
 const TAG: &str = "trixie-slim";
@@ -186,10 +188,12 @@ fn ensure_distro(dir: &Path, proxy: &crate::settings::ProxyConfig) -> Result<()>
     Ok(())
 }
 
-/// Builds the distribution: glibc from Debian's image, then `/etc`.
+/// Builds the distribution: glibc and `mount` from Debian's image, then
+/// `/etc`.
 fn build_rootfs(proxy: &crate::settings::ProxyConfig) -> Result<Vec<u8>> {
     let mut tar = TarWriter::default();
     for dir in [
+        "bin",
         "etc",
         "etc/ssl",
         "etc/ssl/certs",
@@ -214,11 +218,13 @@ fn build_rootfs(proxy: &crate::settings::ProxyConfig) -> Result<Vec<u8>> {
         "usr/lib64/ld-linux-x86-64.so.2",
         "../lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
     );
-    let glibc = fetch_glibc(proxy)?;
-    if !glibc.iter().any(|entry| entry.name.ends_with("/libc.so.6")) {
-        bail!("Debian's image has no glibc where expected");
+    let base = fetch_base(proxy)?;
+    for wanted in ["/libc.so.6", "bin/mount"] {
+        if !base.iter().any(|entry| entry.name.ends_with(wanted)) {
+            bail!("Debian's image has no {wanted} where expected");
+        }
     }
-    for entry in glibc {
+    for entry in base {
         match entry.link {
             Some(target) => tar.symlink(&entry.name, &target),
             None => tar.file(&entry.name, 0o755, &entry.data),
@@ -239,6 +245,8 @@ fn build_rootfs(proxy: &crate::settings::ProxyConfig) -> Result<Vec<u8>> {
             "passwd: files\ngroup: files\nhosts: files dns\n",
         ),
         ("etc/hosts", "127.0.0.1 localhost\n::1 localhost\n"),
+        // WSL's init runs `mount -a` before mounting the drives.
+        ("etc/fstab", ""),
         (
             "etc/os-release",
             "NAME=\"Spotifast Soloist\"\nID=spotifast-soloist\n",
@@ -255,15 +263,23 @@ fn build_rootfs(proxy: &crate::settings::ProxyConfig) -> Result<Vec<u8>> {
     Ok(tar.finish())
 }
 
-/// The trust store Windows uses, as the PEM bundle Soloist reads.
+/// The PEM bundle Soloist reads: Mozilla's roots, which Linux distributions
+/// ship, and whatever else Windows trusts (a company's own authority, a
+/// proxy's). Windows alone is not enough: it downloads most roots only when
+/// one is first needed, so a fresh installation lacks the ones Spotify uses.
 fn certificates() -> String {
     use base64::Engine as _;
     let found = rustls_native_certs::load_native_certs();
     for error in &found.errors {
         log::debug!("soloist: skipped a Windows certificate store: {error}");
     }
+    let mut seen = std::collections::HashSet::new();
     let mut pem = String::new();
-    for certificate in found.certs {
+    let mozilla = webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter();
+    for certificate in mozilla.chain(found.certs.iter()) {
+        if !seen.insert(certificate.as_ref()) {
+            continue;
+        }
         let encoded = base64::engine::general_purpose::STANDARD.encode(certificate.as_ref());
         pem.push_str("-----BEGIN CERTIFICATE-----\n");
         for line in encoded.as_bytes().chunks(64) {
@@ -281,9 +297,9 @@ struct Entry {
     data: Vec<u8>,
 }
 
-/// Streams Debian's image layer and keeps glibc's three libraries, checking
+/// Streams Debian's image layer and keeps what [`placed`] names, checking
 /// the layer against the digest its manifest names.
-fn fetch_glibc(proxy: &crate::settings::ProxyConfig) -> Result<Vec<Entry>> {
+fn fetch_base(proxy: &crate::settings::ProxyConfig) -> Result<Vec<Entry>> {
     let client =
         crate::http::build_blocking(proxy, Duration::from_secs(300)).map_err(anyhow::Error::msg)?;
     let token: Value = client
@@ -343,7 +359,7 @@ fn fetch_glibc(proxy: &crate::settings::ProxyConfig) -> Result<Vec<Entry>> {
     };
     let entries = {
         let mut gz = GzDecoder::new(&mut hashing);
-        let entries = glibc_entries(&mut gz)?;
+        let entries = base_entries(&mut gz)?;
         // Hash every byte, the archive's padding included.
         io::copy(&mut gz, &mut io::sink())?;
         entries
@@ -373,18 +389,32 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The dynamic loader, libc and libm, as files or the links Debian makes.
-fn wanted(name: &str) -> bool {
-    let Some(file) = name.strip_prefix("usr/lib/x86_64-linux-gnu/") else {
-        return false;
-    };
-    !file.contains('/')
-        && (file.starts_with("libc.so")
-            || file.starts_with("libm.so")
-            || file.starts_with("ld-linux-x86-64.so"))
+/// Where an entry of Debian's image goes in the distribution, if it is kept:
+/// the dynamic loader, libc and libm, and `mount` with the libraries it
+/// loads. WSL's init runs `/bin/mount` by that path to mount the Windows
+/// drives; without it `/mnt/c` stays an empty folder and Soloist cannot be
+/// found.
+fn placed(name: &str) -> Option<String> {
+    if name == "usr/bin/mount" {
+        return Some("bin/mount".into());
+    }
+    let file = name.strip_prefix("usr/lib/x86_64-linux-gnu/")?;
+    let kept = !file.contains('/')
+        && [
+            "libc.so",
+            "libm.so",
+            "ld-linux-x86-64.so",
+            "libmount.so",
+            "libblkid.so",
+            "libselinux.so",
+            "libpcre2-8.so",
+        ]
+        .iter()
+        .any(|library| file.starts_with(library));
+    kept.then(|| name.to_string())
 }
 
-fn glibc_entries(tar: &mut impl Read) -> Result<Vec<Entry>> {
+fn base_entries(tar: &mut impl Read) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     let mut header = [0u8; 512];
     loop {
@@ -402,7 +432,9 @@ fn glibc_entries(tar: &mut impl Read) -> Result<Vec<Entry>> {
         let name = name.trim_start_matches("./").to_string();
         let padded = size.div_ceil(512) * 512;
         let kind = header[156];
-        if wanted(&name) && matches!(kind, b'0' | 0 | b'2') {
+        if let Some(name) = placed(&name)
+            && matches!(kind, b'0' | 0 | b'2')
+        {
             if kind == b'2' {
                 entries.push(Entry {
                     name,
@@ -543,7 +575,15 @@ mod tests {
     }
 
     #[test]
-    fn keeps_only_glibc_from_the_image() {
+    fn trusts_mozillas_roots_beside_windows_store() {
+        let pem = certificates();
+        let count = pem.matches("-----BEGIN CERTIFICATE-----").count();
+        assert!(count >= webpki_root_certs::TLS_SERVER_ROOT_CERTS.len());
+        assert_eq!(count, pem.matches("-----END CERTIFICATE-----").count());
+    }
+
+    #[test]
+    fn keeps_glibc_and_mount_from_the_image() {
         let mut layer = TarWriter::default();
         layer.dir("usr/lib/x86_64-linux-gnu", 0o755);
         layer.file("usr/lib/x86_64-linux-gnu/libc.so.6", 0o755, b"libc");
@@ -555,19 +595,28 @@ mod tests {
             &[7; 600],
         );
         layer.file("usr/lib/x86_64-linux-gnu/gconv/libc.so", 0o644, b"no");
+        layer.file("usr/bin/mount", 0o755, b"mount");
+        layer.file("usr/bin/umount", 0o755, b"no");
+        layer.symlink(
+            "usr/lib/x86_64-linux-gnu/libmount.so.1",
+            "libmount.so.1.1.0",
+        );
         let bytes = layer.finish();
-        let entries = glibc_entries(&mut &bytes[..]).unwrap();
+        let entries = base_entries(&mut &bytes[..]).unwrap();
         let names: Vec<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
         assert_eq!(
             names,
             [
                 "usr/lib/x86_64-linux-gnu/libc.so.6",
                 "usr/lib/x86_64-linux-gnu/libm.so.6",
-                "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+                "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+                "bin/mount",
+                "usr/lib/x86_64-linux-gnu/libmount.so.1",
             ]
         );
         assert_eq!(entries[0].data, b"libc");
         assert_eq!(entries[1].link.as_deref(), Some("libm-2.41.so"));
         assert_eq!(entries[2].data, [7; 600]);
+        assert_eq!(entries[3].data, b"mount");
     }
 }

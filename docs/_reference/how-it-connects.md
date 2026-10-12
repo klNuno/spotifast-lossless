@@ -415,10 +415,11 @@ credential store and passes it to Soloist on start.
   serves lyrics, playlists and metadata, and sends the Connect commands
   Soloist's API lacks, such as starting a playlist at a given song.
 - On Windows, Soloist runs in a WSL1 distribution of its own,
-  `Spotifast-Soloist`, which holds only glibc, taken from Debian's official
-  image on Docker Hub (`auth.docker.io`, `registry-1.docker.io`, checked
-  against its digest), and the certificates Windows trusts. WSL must be
-  turned on once, as an administrator, followed by a restart:
+  `Spotifast-Soloist`, which holds only glibc and `mount` (WSL runs it to
+  reach the Windows drives), taken from Debian's official image on Docker
+  Hub (`auth.docker.io`, `registry-1.docker.io`, checked against its
+  digest), Mozilla's root certificates and any others Windows trusts. WSL
+  must be turned on once, as an administrator, followed by a restart:
   `dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart`.
 
 Clearing the queue is not available while lossless playback is on.
