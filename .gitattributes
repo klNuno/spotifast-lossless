@@ -1,6 +1,9 @@
 .github/workflows/*.lock.yml linguist-generated=true
 # Protobuf fixtures must retain every wire byte across Windows checkouts.
 *.pb binary
+# So must the Cast root certificates and the Cast test chain.
+assets/cast/** binary
+src/testdata/cast/** binary
 # Scripts that run inside Linux, embedded or shipped as they are checked out.
 soloist/vm/init text eol=lf
 soloist/**/*.sh text eol=lf

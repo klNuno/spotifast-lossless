@@ -500,8 +500,11 @@ snap the window, and drag a window edge or corner to resize it.
 ## Google Cast playback
 
 Google Cast speakers and speaker groups appear in the device picker. Enable
-local playback first, then select the speaker. Spotifast starts Spotify on it,
-and the speaker then plays like any other Spotify Connect device.
+local playback first, then select the speaker. Spotifast first checks that the
+speaker is a genuine Google Cast device, as Chrome does, then starts Spotify on
+it, and the speaker plays like any other Spotify Connect device. A device that
+fails the check gets nothing, and Spotifast says it could not prove it is
+genuine.
 
 ## Radio
 
