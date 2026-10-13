@@ -269,6 +269,9 @@ pub struct Settings {
     pub player_bar_vis: PlayerBarVis,
     /// Allow clicks on the player bar background to cycle visualizer modes.
     pub player_bar_vis_click: bool,
+    /// How many frames a second the player bar's visualizer and the mini
+    /// player's analyser draw; 0 is uncapped. MilkDrop has its own.
+    pub visualizer_fps: u32,
     /// Last local volume, 0..=65535.
     pub volume: u16,
     /// Whether the library sidebar is visible.
@@ -443,6 +446,7 @@ impl Default for Settings {
             accent_from_art: true,
             player_bar_vis: PlayerBarVis::Off,
             player_bar_vis_click: true,
+            visualizer_fps: crate::milkdrop::DEFAULT_FPS,
             volume: (u16::MAX as u32 * 70 / 100) as u16,
             sidebar_visible: true,
             art_expanded: false,
@@ -1193,6 +1197,32 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let restored: Settings = serde_json::from_str(&json).unwrap();
         assert!(restored.tracklist_compact);
+    }
+
+    /// The main window's visualizers draw 60 frames a second until the user
+    /// picks another rate, and the rate they pick, uncapped included, is
+    /// the rate they get back, without touching MilkDrop's.
+    #[test]
+    fn the_visualizer_frame_rate_defaults_to_60_and_round_trips() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.visualizer_fps, 60);
+        assert_eq!(Settings::default().visualizer_fps, 60);
+        for rate in [30, 144, 0] {
+            let chosen = Settings {
+                visualizer_fps: rate,
+                ..Settings::default()
+            };
+            let json = serde_json::to_string(&chosen).unwrap();
+            let restored: Settings = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored.visualizer_fps, rate);
+            assert_eq!(restored.milkdrop_fps, Settings::default().milkdrop_fps);
+        }
+        let milkdrop_only: Settings =
+            serde_json::from_value(serde_json::json!({"milkdrop_fps": 30})).unwrap();
+        assert_eq!(
+            milkdrop_only.visualizer_fps, 60,
+            "MilkDrop's rate is its own"
+        );
     }
 
     #[test]
