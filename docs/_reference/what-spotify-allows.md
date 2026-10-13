@@ -23,7 +23,8 @@ Spotifast uses the Web API for:
   also save and remove items.
 - **Playlists:** reading, creating, renaming, changing the description and
   visibility, adding and removing songs, reordering songs, and following and
-  unfollowing. Custom playlist cover uploads are available since 0.9.0.
+  unfollowing. The playlist view reports how many people saved a playlist.
+  Custom playlist cover uploads are available since 0.9.0.
 - **Catalogue:** albums, artists, tracks, shows, episodes, search, and
   recommendations. Artist pages include top tracks, releases, and related
   artists.
@@ -77,7 +78,9 @@ clients. Spotifast uses its session for:
   playability; unpublished rows stay visible without entering playback. The
   session collection service reads pre-save state and writes it only after the
   user presses the button. No Web API grant implements this operation.
-- **Display names** for the user IDs attached to songs in a playlist.
+- **Display names and avatars** for the user IDs attached to songs in a
+  playlist and for a playlist's owner, from the profile view Spotify's own
+  clients read.
 - **Precise EP types** for releases that the Web API groups with singles.
 - **Radio and autoplay** through Spotify's context resolver: stations seeded
   by a song, playlist, album, or artist. Each resolution is a fresh mix of 50
