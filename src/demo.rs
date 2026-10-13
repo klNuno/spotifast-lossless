@@ -5717,6 +5717,67 @@ mod tests {
         app.backend.shutdown();
     }
 
+    /// Playlist forms stay sized to their content even on a tall window.
+    #[test]
+    fn playlist_dialogs_stay_compact_on_tall_windows() {
+        for light in [false, true] {
+            for size in [egui::vec2(1280.0, 800.0), egui::vec2(720.0, 1600.0)] {
+                for edit in [false, true] {
+                    for busy in [false, true] {
+                        let (ctx, mut app) = accessible_app("compact-playlist-dialog");
+                        app.settings.theme = if light {
+                            crate::settings::ThemeChoice::Light
+                        } else {
+                            crate::settings::ThemeChoice::Dark
+                        };
+                        app.actions.push(Action::SettingsChanged);
+                        app.playlist_busy = busy;
+                        let input = egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        };
+                        // The same modal area has already shown a longer dialog.
+                        app.dialog = Some(Dialog::Shortcuts);
+                        for _ in 0..3 {
+                            let mut output = ctx.run_ui(input.clone(), |ui| app.frame_ui(ui));
+                            output.textures_delta.clear();
+                        }
+                        app.dialog = None;
+                        let mut output = ctx.run_ui(input.clone(), |ui| app.frame_ui(ui));
+                        output.textures_delta.clear();
+                        app.dialog = Some(if edit {
+                            Dialog::EditPlaylist {
+                                id: "pl1".into(),
+                                name: "Long Way Home".into(),
+                                description: "Songs for the road".into(),
+                                public: Some(false),
+                                cover: Default::default(),
+                            }
+                        } else {
+                            Dialog::CreatePlaylist {
+                                name: "Peak Masculinity".into(),
+                                public: false,
+                                add_uris: vec!["spotify:track:trk1".into()],
+                            }
+                        });
+                        for _ in 0..3 {
+                            let mut output = ctx.run_ui(input.clone(), |ui| app.frame_ui(ui));
+                            output.textures_delta.clear();
+                        }
+                        let dialog = app.dialog_rect.expect("playlist dialog");
+                        let limit = if edit { 600.0 } else { 360.0 };
+                        assert!(
+                            dialog.height() <= limit,
+                            "edit={edit}, busy={busy}, light={light}, size={size:?}: {dialog:?}"
+                        );
+                        assert!(dialog.top() >= 0.0 && dialog.bottom() <= size.y);
+                        app.backend.shutdown();
+                    }
+                }
+            }
+        }
+    }
+
     /// Rule: the interface zoom control puts minus on the left and plus
     /// on the right. The setting row's control is right-to-left, which
     /// used to reverse the two buttons.
