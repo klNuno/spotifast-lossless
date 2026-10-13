@@ -116,10 +116,11 @@ picture. Zero volume still dances.
 - Keep visual evidence in the pull request, in the format under "Visual
   reviews" in `CONTRIBUTING.md`: matching captures attached to the description
   or a comment, Before and After side by side for both themes at narrow and
-  normal sizes, and relevant interaction states. Publish an interactive
+  normal sizes, and relevant interaction states. Attach an interactive
   comparison, or the index for a batch (PR numbers, a selector, Previous/Next
-  controls and links to individual comparisons), outside the repository and
-  link it. Never commit captures, comparison pages or recordings:
+  controls and links to individual comparisons), as a self-contained HTML
+  file, or publish it outside the repository, and link it. Never commit
+  captures, comparison pages or recordings:
   `.github/scripts/check-review-evidence.py` fails CI on them.
 - Record approval and requested adjustments by PR number in the triage ledger.
   Keep visual approval separate from outstanding implementation or test gates.

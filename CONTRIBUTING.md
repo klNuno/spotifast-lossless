@@ -135,10 +135,11 @@ recording when the change moves. Explain the visible change briefly and list
 any remaining checks.
 
 An interactive HTML comparison, with theme and size selectors and Before and
-After buttons or a slider, helps with larger changes. GitHub neither attaches
-HTML files nor renders a gist's HTML, so publish the page elsewhere, for
-example with GitHub Pages from your fork, or attach it as a `.zip`, and link it
-from the description.
+After buttons or a slider, helps with larger changes. Attach it to the pull
+request as one self-contained `.html` file with the captures embedded, which
+GitHub hands readers as a download to open in a browser, or publish it
+elsewhere, for example with GitHub Pages from your fork, and link it from the
+description. A gist does not work: GitHub shows its HTML as source.
 
 When reviewing several changes, provide one index with the PR number and name,
 a selector and Previous/Next controls, and a direct link to each comparison.
