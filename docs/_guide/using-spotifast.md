@@ -239,6 +239,7 @@ Winamp skins do not yet have equivalent accessibility coverage.
 | `B` | Like or unlike the playing song |
 | `S` / `R` | Shuffle / cycle repeat |
 | `Q` | Queue panel |
+| `F` | Enter or leave full screen lyrics |
 | `Ctrl+F` or `/` | Search |
 | `Ctrl+B` | Show or hide the sidebar |
 | `Alt+←` / `Alt+→` | Back or forward |
@@ -554,8 +555,9 @@ Choose the microphone button in the player bar, or press **L**, to open lyrics.
 Synced lyrics follow the playing line automatically. Scroll to pause following,
 choose **Follow** to resume it, or choose a line to jump to that part of the song.
 
-The expand button opens lyrics in full screen. Press **Esc** or choose the
-shrink button to return to your previous window size. Full-screen lyrics
+The expand button, or **F** when no text field has focus, opens lyrics in
+full screen. Press **F** or **Esc**, or choose the shrink button, to return to
+your previous window size. Full-screen lyrics
 scroll smoothly and highlight the playing line automatically. Scrolling by
 hand pauses following; choose **Follow** to resume. Since 0.11.0, a wide
 window shows the song's cover beside the lyrics, the two centred together,
