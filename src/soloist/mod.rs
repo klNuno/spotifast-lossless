@@ -2,10 +2,11 @@
 //!
 //! Soloist is Spotify's own Connect receiver for Linux. Unlike librespot, it
 //! is given Spotify's FLAC streams on accounts that have lossless. Spotifast
-//! runs it as a helper: a child process on Linux, a WSL1 distribution on
-//! Windows. It is driven through its local WebSocket API, and its audio
+//! runs it as a helper: a child process on Linux, and on Windows a small
+//! Linux machine of Spotifast's own (`vm.rs`). It is driven through its
+//! local WebSocket API, and its audio
 //! comes back through `soloist/shim`, a stand-in `libpulse.so.0` that sends
-//! the PCM over loopback TCP into Spotifast's own output chain, so the
+//! the PCM over TCP into Spotifast's own output chain, so the
 //! equalizer, the visualisers and the output device behave as with
 //! librespot.
 //!
@@ -14,12 +15,16 @@
 
 pub(crate) mod connect;
 mod control;
+#[cfg(any(windows, test))]
+mod cpio;
+#[cfg(any(windows, test))]
+mod ext2;
 mod install;
 mod pcm;
 mod prefs;
 mod process;
 #[cfg(windows)]
-mod wsl;
+mod vm;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -34,7 +39,7 @@ pub(crate) use pcm::{SinkBuilder, percent};
 use process::Report;
 
 /// Whether this build can run Soloist: Spotify publishes it for x86_64
-/// Linux, which Windows runs through WSL.
+/// Linux, which Windows runs in Spotifast's machine.
 pub const AVAILABLE: bool = cfg!(all(
     target_arch = "x86_64",
     any(target_os = "linux", windows)
@@ -61,7 +66,7 @@ impl std::fmt::Debug for Config {
 }
 
 /// Installs or updates Soloist ahead of [`Soloist::start`], which then finds
-/// it ready. On Windows this also creates its WSL distribution.
+/// it ready. On Windows this also writes the machine's system disk.
 pub(crate) async fn install(config: &Config, proxy: &crate::settings::ProxyConfig) -> Result<()> {
     let (dir, proxy) = (config.dir.clone(), proxy.clone());
     tokio::task::spawn_blocking(move || prepare(&dir, &proxy).map(drop))
@@ -151,7 +156,10 @@ impl Soloist {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            prefs::apply(&launch.data_host)?;
+            // The machine applies them itself, on its own disk.
+            if let Some(data) = &launch.data_host {
+                prefs::apply(data)?;
+            }
             let volume_percent = if attempt == 1 {
                 pcm::percent(initial_volume)
             } else {
@@ -178,7 +186,11 @@ impl Soloist {
             // Soloist signs in with the account it kept a moment after it
             // starts listening, and reports no user until then.
             let mut signed_in = false;
-            if info.active_user.is_empty() && prefs::has_account(&launch.data_host) {
+            let kept = ports
+                .account
+                .or_else(|| launch.data_host.as_deref().map(prefs::has_account))
+                .unwrap_or(false);
+            if info.active_user.is_empty() && kept {
                 signed_in = wait_logged_in(&state).await.is_ok();
                 if signed_in {
                     info = pairing_info(ports.pairing).await?;
@@ -267,19 +279,27 @@ impl Drop for Soloist {
 struct Ports {
     control: u16,
     pairing: u16,
+    /// Whether Soloist kept an account, when the machine said so.
+    account: Option<bool>,
 }
 
 async fn ports(reports: &mut mpsc::UnboundedReceiver<Report>) -> Result<Ports> {
-    let (mut control, mut pairing) = (None, None);
+    let (mut control, mut pairing, mut account) = (None, None, None);
     while let Some(report) = reports.recv().await {
         match report {
             Report::Control(port) => control = Some(port),
             Report::Pairing(port) => pairing = Some(port),
             Report::ExpiresIn(days) => log::info!("soloist: this build expires in {days} days"),
+            Report::Account(kept) => account = Some(kept),
+            Report::Failed(why) => bail!("Spotify Soloist could not start: {why}"),
             Report::Exited => break,
         }
         if let (Some(control), Some(pairing)) = (control, pairing) {
-            return Ok(Ports { control, pairing });
+            return Ok(Ports {
+                control,
+                pairing,
+                account,
+            });
         }
     }
     bail!("Spotify Soloist stopped while starting; its log is at debug level")
@@ -370,10 +390,11 @@ async fn wait_user(port: u16, user: &str) -> Result<()> {
     bail!("Spotify Soloist did not log in with this account")
 }
 
-/// Soloist, ready to start, and where its data is from Spotifast's side.
+/// Soloist, ready to start, and where its data is from Spotifast's side
+/// when Spotifast can reach it (not inside the machine).
 struct Prepared {
     process: process::Launch,
-    data_host: PathBuf,
+    data_host: Option<PathBuf>,
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -389,15 +410,13 @@ fn prepare(dir: &Path, proxy: &crate::settings::ProxyConfig) -> Result<Prepared>
     write_libraries(&lib)?;
     let text = |path: &Path| path.to_string_lossy().into_owned();
     Ok(Prepared {
-        process: process::Launch {
+        process: process::Launch::Native {
             program: build.binary,
-            prefix: Vec::new(),
             env: vec![("LD_LIBRARY_PATH".into(), text(&lib))],
             data: text(&data),
             cache: text(&cache),
-            distro: None,
         },
-        data_host: data,
+        data_host: Some(data),
     })
 }
 
@@ -415,7 +434,7 @@ fn write_libraries(lib: &Path) -> Result<()> {
 
 #[cfg(all(target_arch = "x86_64", windows))]
 fn prepare(dir: &Path, proxy: &crate::settings::ProxyConfig) -> Result<Prepared> {
-    wsl::prepare(dir, proxy)
+    vm::prepare(dir, proxy)
 }
 
 #[cfg(not(all(target_arch = "x86_64", any(target_os = "linux", windows))))]
@@ -426,8 +445,10 @@ fn prepare(_: &Path, _: &crate::settings::ProxyConfig) -> Result<Prepared> {
 /// Runs a real Soloist that is already paired, playing into a silent sink
 /// paced like an output device. Nothing is heard. Set `SOLOIST_LAB_DIR` to a
 /// Soloist folder whose `data` holds the paired account, and
-/// `SOLOIST_LAB_KEY_FILE` to a file holding the client key. On Windows the
-/// folder is a Windows path and Soloist runs in its WSL distribution:
+/// `SOLOIST_LAB_KEY_FILE` to a file holding the client key. On Windows
+/// Soloist runs in its machine, `SPOTIFAST_VM_DIR` names the machine's files
+/// when no installation is beside the test, and `data` is copied onto the
+/// machine's data disk when that disk is created:
 ///
 /// `cargo test --lib soloist::lab -- --ignored --nocapture`
 #[cfg(all(test, target_arch = "x86_64", any(target_os = "linux", windows)))]
@@ -575,6 +596,13 @@ mod lab {
         );
         assert!(!soloist.device_id().is_empty());
         until("logged in", 10, || state(&shared).connected).await;
+        // SOLOIST_LAB_IDLE_SECS and SOLOIST_LAB_HOLD_SECS keep it idle, then
+        // playing, that long, to measure it.
+        let secs = |name| std::env::var(name).ok().and_then(|secs| secs.parse().ok());
+        if let Some(idle) = secs("SOLOIST_LAB_IDLE_SECS") {
+            tokio::time::sleep(Duration::from_secs(idle)).await;
+            eprintln!("lab: idled {idle} s");
+        }
 
         soloist.send(Command::Play(Some(track.clone()))).unwrap();
         // Soloist can report that it plays a moment before it names the
@@ -613,6 +641,10 @@ mod lab {
                 && now.playback == Playback::Playing
         })
         .await;
+        if let Some(hold) = secs("SOLOIST_LAB_HOLD_SECS") {
+            tokio::time::sleep(Duration::from_secs(hold)).await;
+            eprintln!("lab: held {hold} s");
+        }
 
         soloist.send(Command::Volume(20)).unwrap();
         until("volume reached the mixer", 10, || {

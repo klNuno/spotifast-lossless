@@ -1368,12 +1368,6 @@ msgstr "MacBook刘海小组件"
 msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr "悬停在刘海区域时显示交互式“正在播放”小组件。"
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "通过 Spotify Soloist 播放，套餐支持无损音质时以 FLAC 格式播放。在适用于 Linux 的 Windows 子系统中运行。"
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "通过 Spotify Soloist 播放，套餐支持无损音质时以 FLAC 格式播放。"

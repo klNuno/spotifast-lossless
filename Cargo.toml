@@ -182,16 +182,17 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }
-# The certificates Windows trusts, written into Soloist's WSL distribution
-# (src/soloist/wsl.rs). Already in the build through reqwest's native roots.
+# The certificates Windows trusts, written into Soloist's machine
+# (src/soloist/vm.rs). Already in the build through reqwest's native roots.
 rustls-native-certs = "0.8"
-# Mozilla's root certificates, also written into that distribution: Windows
+# Mozilla's root certificates, also written into that machine: Windows
 # fetches most roots only when something first needs one, so a fresh
 # installation's store lacks the ones Spotify's servers chain to. From the
 # rustls project, like the webpki-roots already in the build.
 webpki-root-certs = "1"
-# Message loops, the taskbar thumbnail buttons and window styles.
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Accessibility", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# Message loops, the taskbar thumbnail buttons and window styles; the job
+# that ends Soloist's machine with Spotifast and its sparse data disk.
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_Com", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Accessibility", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Reuses the zbus/Tokio stack already used for desktop integration.

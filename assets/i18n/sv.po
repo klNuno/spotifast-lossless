@@ -1406,12 +1406,6 @@ msgstr "MacBook-flärpwidget"
 msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr "Visa interaktiv Spelas nu-widget när pekaren hålls över flärpen."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Spelas upp via Spotify Soloist, i FLAC när ditt abonnemang har förlustfritt ljud. Körs i Windows Subsystem for Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Spelas upp via Spotify Soloist, i FLAC när ditt abonnemang har förlustfritt ljud."

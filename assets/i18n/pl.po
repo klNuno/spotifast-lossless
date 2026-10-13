@@ -1420,12 +1420,6 @@ msgstr ""
 "Pokaż interaktywny widżet Teraz odtwarzane po najechaniu kursorem na "
 "wycięcie."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Odtwarza przez Spotify Soloist, w FLAC, gdy twój plan obejmuje dźwięk bezstratny. Działa w Windows Subsystem for Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Odtwarza przez Spotify Soloist, w FLAC, gdy twój plan obejmuje dźwięk bezstratny."

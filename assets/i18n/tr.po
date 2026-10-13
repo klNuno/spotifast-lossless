@@ -1411,12 +1411,6 @@ msgstr ""
 "İmleç çentiğin üzerine getirildiğinde etkileşimli Şu An Çalan araç takımını "
 "göster."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Spotify Soloist üzerinden çalar. Planınızda kayıpsız ses varsa FLAC formatında çalar. Linux için Windows Alt Sistemi'nde çalışır."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Spotify Soloist üzerinden çalar. Planınızda kayıpsız ses varsa FLAC formatında çalar."

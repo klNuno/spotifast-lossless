@@ -401,10 +401,10 @@ credential store and passes it to Soloist on start.
 - Spotifast downloads Soloist from `soloist-builds.spotifycdn.com` on first
   use, checks once a day whether a newer build is published, and replaces a
   build before its 90-day lifetime ends.
-- Soloist runs as a child process and listens on loopback only: a WebSocket
-  API Spotifast drives it through, and a pairing endpoint Spotifast uses
-  once to hand it the playback account. It talks to Spotify itself, through
-  the same proxy rules as the rest of the system.
+- On Linux, Soloist runs as a child process and listens on loopback only: a
+  WebSocket API Spotifast drives it through, and a pairing endpoint
+  Spotifast uses once to hand it the playback account. It talks to Spotify
+  itself, through the same proxy rules as the rest of the system.
 - Its audio comes back through `soloist/shim`, a stand-in `libpulse.so.0`
   that sends the stream over a loopback TCP port into Spotifast's own
   output, so the equalizer, visualisers, volume and output device behave as
@@ -412,20 +412,30 @@ credential store and passes it to Soloist on start.
   shim also provides the `libatomic.so.1` Soloist links, so the system needs
   neither library. That one also answers two of Soloist's calls to the
   system. `fsync` on a directory, which LevelDB makes after each manifest
-  and WSL1 refuses, reports success. `bind` puts Soloist's ZeroConf login
-  server and its mDNS socket on loopback: Soloist would otherwise accept
-  accounts from any device on the network and announce itself there, and
-  Windows would ask about it in a firewall prompt.
+  and some filesystems refuse, reports success. `bind` puts Soloist's
+  ZeroConf login server and its mDNS socket on loopback: Soloist would
+  otherwise accept accounts from any device on the network and announce
+  itself there.
 - The librespot session stays signed in without its Connect device. It
   serves lyrics, playlists and metadata, and sends the Connect commands
   Soloist's API lacks, such as starting a playlist at a given song.
-- On Windows, Soloist runs in a WSL1 distribution of its own,
-  `Spotifast-Soloist`, which holds only glibc and `mount` (WSL runs it to
-  reach the Windows drives), taken from Debian's official image on Docker
-  Hub (`auth.docker.io`, `registry-1.docker.io`, checked against its
-  digest), Mozilla's root certificates and any others Windows trusts. WSL
-  must be turned on once, as an administrator, followed by a restart:
-  `dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart`.
+- On Windows, Soloist runs in a small Linux machine that ships with
+  Spotifast in `vm\`: QEMU, Debian's cloud kernel, busybox and glibc
+  (`soloist/vm/build-bundle.sh`, `soloist/vm/build-qemu.sh`). It needs no
+  administrator, no Windows feature and no restart. QEMU translates the
+  machine's code itself, one processor and 160 MiB of memory. Every wakeup
+  of the machine is costly there, so the shim sends 40 ms blocks instead of
+  10 ms and the kernel groups Soloist's timers within 30 ms. On a recent
+  desktop processor the machine then takes about 4 % of one core while
+  Soloist waits and 9 % while FLAC plays. The machine's only network is
+  QEMU's private one: Spotifast reaches the WebSocket API and the pairing
+  endpoint through ports QEMU forwards on loopback, and the shim sends the
+  audio to the address QEMU connects to Spotifast's loopback port.
+  Soloist and the shim sit on a read-only disk Spotifast writes when either
+  changes (`system.img`); the account and the audio cache sit on a second,
+  sparse disk the machine formats on first use (`data.img`). The client key
+  goes over the machine's console and is never written to disk. The
+  machine trusts Mozilla's root certificates and any others Windows trusts.
 
 Clearing the queue is not available while lossless playback is on.
 

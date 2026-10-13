@@ -1403,12 +1403,6 @@ msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr ""
 "ノッチの上にカーソルを置いたときに対話型の再生中ウィジェットを表示します。"
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Spotify Soloist経由で再生します。プランがロスレスに対応している場合はFLACで再生します。Linux 用 Windows サブシステムで動作します。"
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Spotify Soloist経由で再生します。プランがロスレスに対応している場合はFLACで再生します。"

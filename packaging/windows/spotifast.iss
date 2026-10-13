@@ -8,6 +8,10 @@
 ; is named like the zip next to it. It needs no administrator rights: the
 ; program goes to the user's own Programs folder with a Start menu entry,
 ; and a running copy is closed before an update replaces it.
+;
+; An x86_64 build can also take /DMachine=<folder>, the Linux machine that
+; runs Spotify Soloist for lossless playback (soloist/vm/build-bundle.sh and
+; soloist/vm/build-qemu.sh write it); it goes to {app}\vm.
 
 #ifndef Version
   #error Version must be defined on the ISCC command line
@@ -76,6 +80,9 @@ Source: "{#Binary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "spotifast-installer.txt"; DestDir: "{app}"; Flags: ignoreversion
+#ifdef Machine
+Source: "{#Machine}\*"; DestDir: "{app}\vm"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"

@@ -1,29 +1,31 @@
-//! Runs Soloist: as a child process on Linux, in a WSL1 distribution on
-//! Windows. Either way it gets the shim as its `libpulse.so.0`, a pipe as
-//! standard input that ends its life with Spotifast's, and verbose output
-//! that is read for the ports it opens and never written to disk.
+//! Runs Soloist: as a child process on Linux, in Spotifast's own Linux
+//! machine on Windows (see `vm.rs`). Either way it gets the shim as its
+//! `libpulse.so.0` and verbose output that is read for the ports it opens
+//! and never written to disk.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
 /// How to start Soloist on this system.
-#[derive(Clone, Debug)]
-pub(crate) struct Launch {
-    /// The program to run and the arguments that come before Soloist's own.
-    pub program: std::path::PathBuf,
-    pub prefix: Vec<String>,
-    /// Environment for Soloist, as `NAME=value`. Under WSL they travel
-    /// through `WSLENV`.
-    pub env: Vec<(String, String)>,
-    /// Soloist's folders, as Soloist sees them.
-    pub data: String,
-    pub cache: String,
-    /// The WSL distribution to stop with Soloist.
-    pub distro: Option<String>,
+#[derive(Debug)]
+pub(crate) enum Launch {
+    /// Soloist itself, with these extra environment variables and folders.
+    #[cfg_attr(windows, allow(dead_code))]
+    Native {
+        program: std::path::PathBuf,
+        env: Vec<(String, String)>,
+        data: String,
+        cache: String,
+    },
+    /// Soloist in its machine.
+    #[cfg(windows)]
+    Machine(super::vm::Machine),
 }
 
 /// What Soloist is started with.
@@ -44,56 +46,96 @@ pub(crate) enum Report {
     Pairing(u16),
     /// The build stops working in this many days.
     ExpiresIn(u32),
+    /// Whether Soloist kept an account from an earlier run, as the machine
+    /// found before starting it.
+    Account(bool),
+    /// The machine could not start Soloist.
+    Failed(String),
     /// The output ended: Soloist exited.
     Exited,
 }
 
+/// The loopback ports QEMU forwards into the machine.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Forwarded {
+    pub control: u16,
+    pub pairing: u16,
+    /// The pairing port inside the machine, which the shim pins.
+    pub pairing_inside: u16,
+}
+
+/// How long the machine may take to stop Soloist, write its data and power
+/// off before it is ended.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+
 pub(crate) struct Process {
     child: Child,
-    /// Never written to: closing it tells the shim Spotifast is gone.
-    lifeline: Option<ChildStdin>,
-    distro: Option<String>,
+    /// Standard input. On Linux it is never written to: closing it tells the
+    /// shim Spotifast is gone. In the machine it is the console.
+    input: Arc<Mutex<Option<ChildStdin>>>,
+    machine: bool,
+    #[cfg(windows)]
+    _job: Option<super::vm::Job>,
+}
+
+/// Soloist's own arguments, all but the key.
+pub(crate) fn soloist_args(
+    args: &Args<'_>,
+    data: &str,
+    cache: &str,
+    websocket: &str,
+) -> Vec<String> {
+    [
+        "-n",
+        args.name,
+        "-D",
+        data,
+        "-C",
+        cache,
+        "-z",
+        &args.cache_mb.max(100).to_string(),
+        "-i",
+        &args.volume_percent.min(100).to_string(),
+        "-w",
+        websocket,
+        "-v",
+    ]
+    .map(str::to_string)
+    .to_vec()
 }
 
 pub(crate) fn spawn(
     launch: &Launch,
     args: &Args<'_>,
 ) -> Result<(Process, mpsc::UnboundedReceiver<Report>)> {
-    let mut command = Command::new(&launch.program);
-    command.args(&launch.prefix);
-    command.args([
-        "-n",
-        args.name,
-        "-k",
-        args.key,
-        "-D",
-        &launch.data,
-        "-C",
-        &launch.cache,
-        "-z",
-        &args.cache_mb.max(100).to_string(),
-        "-i",
-        &args.volume_percent.min(100).to_string(),
-        "-w",
-        "127.0.0.1:0",
-        "-v",
-    ]);
-    let mut env = launch.env.clone();
-    env.extend([
-        (
-            "PULSE_SHIM_OUT".to_string(),
-            format!("tcp:127.0.0.1:{}", args.pcm_port),
-        ),
-        ("PULSE_SHIM_LIFELINE".into(), "1".into()),
-        // The key has to be an argument, which any local user can read in
-        // /proc. The shim blanks it once Soloist has taken it in.
-        ("PULSE_SHIM_HIDE".into(), "-k".into()),
-    ]);
-    if launch.distro.is_some() {
-        let names: Vec<String> = env.iter().map(|(name, _)| format!("{name}/u")).collect();
-        command.env("WSLENV", names.join(":"));
-    }
-    command.envs(env);
+    let (mut command, forwarded) = match launch {
+        Launch::Native {
+            program,
+            env,
+            data,
+            cache,
+        } => {
+            let mut command = Command::new(program);
+            command.args(soloist_args(args, data, cache, "127.0.0.1:0"));
+            command.args(["-k", args.key]);
+            command.envs(env.iter().cloned()).envs([
+                (
+                    "PULSE_SHIM_OUT".to_string(),
+                    format!("tcp:127.0.0.1:{}", args.pcm_port),
+                ),
+                ("PULSE_SHIM_LIFELINE".into(), "1".into()),
+                // The key has to be an argument, which any local user can
+                // read in /proc. The shim blanks it once Soloist has it.
+                ("PULSE_SHIM_HIDE".into(), "-k".into()),
+            ]);
+            (command, None)
+        }
+        #[cfg(windows)]
+        Launch::Machine(machine) => {
+            let (command, forwarded) = machine.command(args)?;
+            (command, Some(forwarded))
+        }
+    };
     let (reader, writer) = std::io::pipe().context("no pipe for Soloist's output")?;
     command
         .stdin(Stdio::piped())
@@ -104,48 +146,157 @@ pub(crate) fn spawn(
     // The command still holds the pipe's write ends; without dropping it
     // the reader would never see the end of the output.
     drop(command);
-    let lifeline = child.stdin.take();
+    #[cfg(windows)]
+    let job = match super::vm::Job::hold(&child) {
+        Ok(job) => Some(job),
+        Err(error) => {
+            log::warn!("soloist: the machine may outlive Spotifast: {error}");
+            None
+        }
+    };
+    let input = Arc::new(Mutex::new(child.stdin.take()));
     let (reports, received) = mpsc::unbounded_channel();
+    let mut output = Output {
+        forwarded,
+        key: forwarded.map(|_| args.key.to_string()),
+        redact: args.key.to_string(),
+        input: Arc::clone(&input),
+        reports,
+    };
     thread::Builder::new()
         .name("soloist-output".into())
         .spawn(move || {
             for line in BufReader::new(reader).lines() {
                 let Ok(line) = line else { break };
-                let line = strip_ansi(&line);
-                if let Some(report) = report(&line) {
-                    let _ = reports.send(report);
-                }
-                if line_is_error(&line) {
-                    log::warn!("soloist: {}", line.trim());
-                } else {
-                    log::trace!("soloist: {}", line.trim());
-                }
+                output.line(&line);
             }
-            let _ = reports.send(Report::Exited);
+            let _ = output.reports.send(Report::Exited);
         })?;
     Ok((
         Process {
             child,
-            lifeline,
-            distro: launch.distro.clone(),
+            input,
+            machine: forwarded.is_some(),
+            #[cfg(windows)]
+            _job: job,
         },
         received,
     ))
 }
 
+/// Reads Soloist's output, and the machine's, line by line.
+struct Output {
+    /// Set when Soloist runs in the machine.
+    forwarded: Option<Forwarded>,
+    /// The client key, until the machine asks for it.
+    key: Option<String>,
+    /// Never logged.
+    redact: String,
+    input: Arc<Mutex<Option<ChildStdin>>>,
+    reports: mpsc::UnboundedSender<Report>,
+}
+
+impl Output {
+    fn line(&mut self, line: &str) {
+        let line = strip_ansi(line);
+        let line = line.trim_end_matches('\r');
+        let line = if self.redact.is_empty() {
+            line.to_string()
+        } else {
+            line.replace(&self.redact, "<key>")
+        };
+        if let Some(said) = line.strip_prefix("spotifast-vm: ") {
+            match machine_line(said) {
+                Some(MachineLine::Ready) => self.send_key(),
+                Some(MachineLine::Report(report)) => {
+                    if let Report::Failed(why) = &report {
+                        log::warn!("soloist: the machine: {why}");
+                    }
+                    let _ = self.reports.send(report);
+                }
+                None => log::debug!("soloist: the machine: {said}"),
+            }
+            return;
+        }
+        if let Some(report) = report(&line) {
+            let _ = self.reports.send(on_host(self.forwarded, report));
+        }
+        if line_is_error(&line) {
+            log::warn!("soloist: {}", line.trim());
+        } else {
+            log::trace!("soloist: {}", line.trim());
+        }
+    }
+
+    /// The machine reads the key from its console once it is ready.
+    fn send_key(&mut self) {
+        let Some(key) = self.key.take() else { return };
+        let mut input = self.input.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(console) = input.as_mut() {
+            let sent = console
+                .write_all(format!("{key}\n").as_bytes())
+                .and_then(|()| console.flush());
+            if let Err(error) = sent {
+                log::warn!("soloist: cannot reach the machine's console: {error}");
+            }
+        }
+    }
+}
+
+/// A port Soloist opened, as Spotifast reaches it.
+fn on_host(forwarded: Option<Forwarded>, report: Report) -> Report {
+    let Some(ports) = forwarded else {
+        return report;
+    };
+    match report {
+        Report::Control(_) => Report::Control(ports.control),
+        Report::Pairing(port) => {
+            if port != ports.pairing_inside {
+                log::warn!("soloist: pairing opened on {port}, not the forwarded port");
+            }
+            Report::Pairing(ports.pairing)
+        }
+        other => other,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MachineLine {
+    Ready,
+    Report(Report),
+}
+
+/// A line `soloist/vm/init` wrote for Spotifast, without its prefix.
+fn machine_line(said: &str) -> Option<MachineLine> {
+    match said {
+        "ready" => Some(MachineLine::Ready),
+        "account yes" => Some(MachineLine::Report(Report::Account(true))),
+        "account no" => Some(MachineLine::Report(Report::Account(false))),
+        _ => said
+            .strip_prefix("error: ")
+            .map(|why| MachineLine::Report(Report::Failed(why.to_string()))),
+    }
+}
+
 impl Process {
     pub(crate) fn stop(&mut self) {
-        self.lifeline.take();
-        if let Some(distro) = &self.distro {
-            // Ending wsl.exe can leave the Linux side running; terminating
-            // the distribution ends everything in it.
-            let mut terminate = Command::new("wsl.exe");
-            terminate
-                .args(["--terminate", distro])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            hide_window(&mut terminate);
-            let _ = terminate.status();
+        let input = self
+            .input
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if self.machine
+            && let Some(mut console) = input
+            && console
+                .write_all(b"stop\n")
+                .and_then(|()| console.flush())
+                .is_ok()
+        {
+            // The machine stops Soloist, writes its data and powers off.
+            let deadline = Instant::now() + STOP_GRACE;
+            while Instant::now() < deadline && matches!(self.child.try_wait(), Ok(None)) {
+                thread::sleep(Duration::from_millis(50));
+            }
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -236,6 +387,44 @@ mod tests {
                 Report::Control(39090),
                 Report::Pairing(52083)
             ]
+        );
+    }
+
+    #[test]
+    fn reads_what_the_machine_says() {
+        assert_eq!(machine_line("ready"), Some(MachineLine::Ready));
+        assert_eq!(
+            machine_line("account yes"),
+            Some(MachineLine::Report(Report::Account(true)))
+        );
+        assert_eq!(
+            machine_line("error: cannot read Soloist's disk"),
+            Some(MachineLine::Report(Report::Failed(
+                "cannot read Soloist's disk".into()
+            )))
+        );
+        assert_eq!(machine_line("something else"), None);
+    }
+
+    #[test]
+    fn gives_the_machines_ports_as_forwarded() {
+        let forwarded = Some(Forwarded {
+            control: 50_001,
+            pairing: 50_002,
+            pairing_inside: 4071,
+        });
+        assert_eq!(
+            on_host(forwarded, Report::Control(4070)),
+            Report::Control(50_001)
+        );
+        assert_eq!(
+            on_host(forwarded, Report::Pairing(4071)),
+            Report::Pairing(50_002)
+        );
+        assert_eq!(on_host(None, Report::Pairing(4071)), Report::Pairing(4071));
+        assert_eq!(
+            on_host(forwarded, Report::ExpiresIn(3)),
+            Report::ExpiresIn(3)
         );
     }
 

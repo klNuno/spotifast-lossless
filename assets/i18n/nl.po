@@ -1414,12 +1414,6 @@ msgstr ""
 "Toon interactieve widget voor Wordt afgespeeld bij het aanwijzen van de "
 "notch."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Speelt af via Spotify Soloist, in FLAC als je abonnement lossless heeft. Draait in het Windows-subsysteem voor Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Speelt af via Spotify Soloist, in FLAC als je abonnement lossless heeft."

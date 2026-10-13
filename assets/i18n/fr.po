@@ -1415,12 +1415,6 @@ msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr ""
 "Afficher le widget interactif En cours de lecture au survol de l’encoche."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Lecture via Spotify Soloist, en FLAC si votre abonnement inclut la lecture sans perte. S’exécute dans le Sous-système Windows pour Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Lecture via Spotify Soloist, en FLAC si votre abonnement inclut la lecture sans perte."

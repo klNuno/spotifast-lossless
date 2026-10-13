@@ -1419,12 +1419,6 @@ msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr ""
 "Показувати інтерактивний віджет «Відтворюється» під час наведення на виріз."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Відтворення через Spotify Soloist, у FLAC, якщо ваш тариф включає відтворення без втрат. Працює в Windows Subsystem for Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Відтворення через Spotify Soloist, у FLAC, якщо ваш тариф включає відтворення без втрат."

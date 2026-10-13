@@ -289,7 +289,7 @@ fn make_executable(path: &Path) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
 }
 
-/// The WSL distribution sets the mode itself.
+/// On Windows, Soloist's disk in the machine marks it executable.
 #[cfg(not(unix))]
 fn make_executable(_: &Path) -> io::Result<()> {
     Ok(())

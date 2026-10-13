@@ -1,0 +1,102 @@
+#!/bin/sh
+# PID 1 of Spotifast's Soloist virtual machine on Windows. Spotifast writes
+# this file into the machine at each start (see src/soloist/vm.rs), with
+# /etc/soloist.args (Soloist's arguments, one per line), /etc/soloist.env
+# (the shim's settings) and the certificates Windows trusts.
+#
+# Lines starting with "spotifast-vm:" on the console are for Spotifast;
+# everything else is Soloist's own output. The client key arrives on the
+# console once "ready" is out, with echo off, and is never written down.
+export PATH=/bin
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+console=/dev/hvc0
+stty -echo <$console
+say() { echo "spotifast-vm: $*" >$console; }
+for module in failover net_failover virtio_net virtio_blk virtio-rng; do
+    insmod /lib/modules/$module.ko
+done
+ip link set lo up
+ip link set eth0 up
+ip addr add 10.0.2.15/24 dev eth0
+ip route add default via 10.0.2.2
+
+# The disk whose serial number is $1.
+disk() {
+    for block in /sys/block/vd*; do
+        [ "$(cat "$block/serial" 2>/dev/null)" = "$1" ] && echo "/dev/${block##*/}"
+    done
+}
+
+# Soloist and the shim, on a read-only disk Spotifast writes.
+if ! mount -t ext4 -o ro "$(disk system)" /opt/soloist; then
+    say "error: cannot read Soloist's disk"
+    poweroff -f
+fi
+
+# Data reaches the disk within two seconds, so ending the machine abruptly
+# loses little.
+echo 200 >/proc/sys/vm/dirty_expire_centisecs
+echo 100 >/proc/sys/vm/dirty_writeback_centisecs
+
+# Soloist's data and cache, kept between starts. A new disk is formatted,
+# then gets the data Spotifast carried over from an earlier installation.
+data=$(disk data)
+if ! mount -t ext4 -o noatime "$data" /data 2>/dev/null; then
+    if ! { mke2fs -q -F -b 4096 -N 8192 -m 0 "$data" >/dev/null &&
+        mount -t ext4 -o noatime "$data" /data; }; then
+        say "error: cannot prepare Soloist's data disk"
+        poweroff -f
+    fi
+    mkdir -p /data/data
+    [ -d /seed ] && cp -a /seed/. /data/data/
+fi
+mkdir -p /data/data /data/cache
+
+# Lossless and no loudness normalisation for every account Soloist knows
+# (src/soloist/prefs.rs does the same on Linux).
+account=no
+for user in /data/data/settings/Users/*-user; do
+    [ -d "$user" ] || continue
+    account=yes
+    prefs=$user/prefs
+    touch "$prefs"
+    grep -v -e '^audio.play_bitrate_enumeration=' \
+        -e '^audio.play_bitrate_non_metered_enumeration=' \
+        -e '^audio.normalize_v2=' "$prefs" >"$prefs.new"
+    printf '%s\n' audio.play_bitrate_enumeration=5 \
+        audio.play_bitrate_non_metered_enumeration=5 audio.normalize_v2=false >>"$prefs.new"
+    mv "$prefs.new" "$prefs"
+done
+sync
+say "account $account"
+
+say ready
+read -r key <$console
+set --
+while IFS= read -r argument; do
+    set -- "$@" "$argument"
+done </etc/soloist.args
+while IFS= read -r setting; do
+    export "${setting?}"
+done </etc/soloist.env
+# Soloist's threads wake on short timers, and every wakeup is costly in an
+# emulated machine. Letting the kernel group them within 30 ms halves them.
+echo 30000000 >/proc/$$/timerslack_ns
+LD_LIBRARY_PATH=/opt/soloist /opt/soloist/soloist "$@" -k "$key" >$console 2>&1 &
+soloist=$!
+unset key
+
+# Spotifast writes "stop" to end the machine.
+(
+    while read -r line <$console; do
+        [ "$line" = stop ] && break
+    done
+    kill $soloist
+) &
+wait $soloist
+sync
+umount /data
+poweroff -f

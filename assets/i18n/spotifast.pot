@@ -1379,12 +1379,6 @@ msgstr ""
 msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr ""
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr ""
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr ""

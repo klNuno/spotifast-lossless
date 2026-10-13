@@ -540,17 +540,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .when(cfg!(target_os = "macos")),
         RowText::new(
             lossless.clone(),
-            if cfg!(windows) {
-                gettext(
-                    locale,
-                    "Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in Windows Subsystem for Linux.",
-                )
-            } else {
-                gettext(
-                    locale,
-                    "Plays through Spotify Soloist, in FLAC when your plan has lossless.",
-                )
-            },
+            gettext(
+                locale,
+                "Plays through Spotify Soloist, in FLAC when your plan has lossless.",
+            ),
         )
         .when(crate::soloist::AVAILABLE),
         RowText::new(

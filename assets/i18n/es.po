@@ -1411,12 +1411,6 @@ msgstr ""
 "Mostrar un widget interactivo de Sonando ahora al pasar el cursor sobre la "
 "muesca."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Reproduce con Spotify Soloist, en FLAC si tu plan incluye audio sin pérdida. Se ejecuta en el Subsistema de Windows para Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Reproduce con Spotify Soloist, en FLAC si tu plan incluye audio sin pérdida."

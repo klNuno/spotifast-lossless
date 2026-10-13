@@ -1417,12 +1417,6 @@ msgstr ""
 "Показывать интерактивный виджет «Сейчас играет» при наведении курсора на "
 "вырез."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Играет через Spotify Soloist во FLAC, если в твоём тарифе есть звук без потерь. Работает в подсистеме Windows для Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Играет через Spotify Soloist во FLAC, если в твоём тарифе есть звук без потерь."

@@ -1414,12 +1414,6 @@ msgid "Show interactive Now Playing widget when hovering over the notch."
 msgstr ""
 "Mostra il widget interattivo In riproduzione passando il cursore sulla tacca."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Riproduce tramite Spotify Soloist, in FLAC quando il tuo piano include lossless. Viene eseguito nel Sottosistema Windows per Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Riproduce tramite Spotify Soloist, in FLAC quando il tuo piano include lossless."

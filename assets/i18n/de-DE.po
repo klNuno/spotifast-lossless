@@ -1417,12 +1417,6 @@ msgstr ""
 "Interaktives „Aktuelle Wiedergabe“-Widget beim Bewegen des Zeigers über die "
 "Notch anzeigen."
 
-#: src/ui/settings.rs:546
-msgid ""
-"Plays through Spotify Soloist, in FLAC when your plan has lossless. Runs in "
-"Windows Subsystem for Linux."
-msgstr "Spielt über Spotify Soloist ab, in FLAC, wenn dein Tarif verlustfreie Audioqualität enthält. Läuft im Windows-Subsystem für Linux."
-
 #: src/ui/settings.rs:551
 msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
 msgstr "Spielt über Spotify Soloist ab, in FLAC, wenn dein Tarif verlustfreie Audioqualität enthält."
