@@ -595,14 +595,17 @@ impl Settings {
         }
     }
 
+    /// The settings as their file holds them.
+    pub fn encode(&self) -> Option<String> {
+        serde_json::to_string_pretty(self)
+            .map_err(|error| log::warn!("unable to encode settings: {error}"))
+            .ok()
+    }
+
+    /// Writes the settings and waits for the disk. The app saves through
+    /// its [`crate::file_writer::FileWriter`] instead.
     pub fn save(&self, path: &Path) {
-        let text = match serde_json::to_string_pretty(self) {
-            Ok(text) => text,
-            Err(error) => {
-                log::warn!("unable to encode settings: {error}");
-                return;
-            }
-        };
+        let Some(text) = self.encode() else { return };
         if let Err(error) = fastframe_file::write(path, text) {
             log::warn!("unable to save settings to {}: {error}", path.display());
         }
@@ -1574,14 +1577,17 @@ impl SessionState {
             .unwrap_or_default()
     }
 
+    /// The session as its file holds it.
+    pub fn encode(&self) -> Option<String> {
+        serde_json::to_string(self)
+            .map_err(|error| log::warn!("unable to encode session: {error}"))
+            .ok()
+    }
+
+    /// Writes the session and waits for the disk. The app saves through
+    /// its [`crate::file_writer::FileWriter`] instead.
     pub fn save(&self, path: &Path) {
-        let text = match serde_json::to_string(self) {
-            Ok(text) => text,
-            Err(error) => {
-                log::warn!("unable to encode session: {error}");
-                return;
-            }
-        };
+        let Some(text) = self.encode() else { return };
         if let Err(error) = fastframe_file::write(path, text) {
             log::warn!("unable to save session to {}: {error}", path.display());
         }

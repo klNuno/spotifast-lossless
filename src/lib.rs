@@ -15,6 +15,7 @@ pub mod credentials;
 pub mod demo;
 pub mod emoji;
 pub mod eq;
+pub mod file_writer;
 pub mod history;
 pub mod http;
 pub mod i18n;

@@ -1449,6 +1449,7 @@ impl eframe::App for Shell {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let app = &mut *self.app;
         app.save_state();
+        app.flush_files();
     }
 }
 
