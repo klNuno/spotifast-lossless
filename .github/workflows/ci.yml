@@ -18,6 +18,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Dependencies come only from crates.io or from crmne repositories, and
+  # review evidence (captures, comparison pages, recordings) stays in the pull
+  # request instead of the tree. See CONTRIBUTING.md.
+  policy:
+    name: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Dependency sources
+        run: python3 .github/scripts/check-dependency-sources.py
+      - name: No review evidence in the tree
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/check-review-evidence.py
+      - name: Policy check regressions
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/test-policy-checks.py
+
   quality:
     name: quality
     runs-on: ubuntu-latest
