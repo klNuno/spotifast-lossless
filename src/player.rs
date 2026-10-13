@@ -737,7 +737,7 @@ impl Engine {
             PlayerCommand::Next => spirc.next()?,
             PlayerCommand::Previous => spirc.prev()?,
             PlayerCommand::ClearQueue => spirc.clear_queue()?,
-            PlayerCommand::AddToQueue(uri) => spirc.add_to_queue(uri)?,
+            PlayerCommand::AddToQueue(uri) => spirc.add_to_queue(SpotifyUri::from_uri(&uri)?)?,
             PlayerCommand::Seek(position_ms) => spirc.set_position_ms(position_ms)?,
             PlayerCommand::Volume(volume) => self.note_volume(volume, false)?,
             PlayerCommand::VolumePreview(volume) => self.note_volume(volume, true)?,
@@ -1182,7 +1182,7 @@ fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
                 &mut state.error,
                 Some(format!(
                     "This item isn't available: {}",
-                    track_id.to_uri().unwrap_or_default()
+                    track_id.to_uri()
                 )),
             );
             changed |= set(&mut state.loading, false);
@@ -1225,7 +1225,9 @@ fn apply_event(state: &mut LocalState, event: PlayerEvent) -> bool {
         | PlayerEvent::EndOfTrack { .. }
         | PlayerEvent::PlayRequestIdChanged { .. }
         | PlayerEvent::AutoPlayChanged { .. }
-        | PlayerEvent::FilterExplicitContentChanged { .. } => false,
+        | PlayerEvent::FilterExplicitContentChanged { .. }
+        // Only sent when `ConnectConfig::emit_set_queue_events` asks for it.
+        | PlayerEvent::SetQueue { .. } => false,
     }
 }
 
@@ -1235,7 +1237,7 @@ fn local_track(item: &AudioItem) -> LocalTrack {
             artists
                 .iter()
                 .map(|artist| {
-                    let uri = artist.id.to_uri().ok();
+                    let uri = Some(artist.id.to_uri());
                     ArtistRef {
                         id: uri
                             .as_deref()
@@ -1446,7 +1448,7 @@ mod tests {
         ];
         let item = AudioItem {
             track_id: uri(),
-            uri: uri().to_uri().unwrap(),
+            uri: uri().to_uri(),
             files: Default::default(),
             name: "Song".into(),
             covers: vec![],
@@ -1614,7 +1616,7 @@ mod tests {
     fn interlude() -> AudioItem {
         AudioItem {
             track_id: uri(),
-            uri: uri().to_uri().unwrap(),
+            uri: uri().to_uri(),
             files: Default::default(),
             name: "Short interlude".into(),
             covers: vec![],

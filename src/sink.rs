@@ -1323,7 +1323,7 @@ mod tests {
             librespot_core::SpotifyUri::from_uri("spotify:track:14XWXWv5FoCbFzLksawpEe").unwrap();
         let item = AudioItem {
             track_id: track_id.clone(),
-            uri: track_id.to_uri().unwrap(),
+            uri: track_id.to_uri(),
             files: Default::default(),
             name: "Next song".into(),
             covers: vec![],

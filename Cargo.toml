@@ -300,21 +300,21 @@ projectm-sys = { git = "https://github.com/crmne/projectm-rs", rev = "1ef6df1c20
 # hyper-proxy2's unreleased rustls 0.23 update plus our upstream provider
 # compatibility fix. Drop this fork when a release includes both changes.
 hyper-proxy2 = { git = "https://github.com/crmne/hyper-proxy2", rev = "efca4811371ddae81c06be168de54194938d70b1" }
-# librespot 0.8.0 plus the small patches Spotifast needs: queue controls,
-# normalisation-factor reporting for the visualisers, and a distinct event
-# when Spotify refuses an audio key, bounded socket setup with DNS address
-# fallback, an in-memory credential cache for platform storage, full
-# playback-state recovery after a session disconnect, the desktop platform
-# signature for Windows on ARM, and a volume set while the device is inactive.
-# Recovery is proposed upstream in librespot-org/librespot#1765 and the
-# volume in librespot-org/librespot#1770; the ARM signature answers
-# librespot-org/librespot#1737.
-# Every librespot crate comes from the
-# fork so one copy exists. Drop patches as upstream takes them.
-librespot-audio = { git = "https://github.com/crmne/librespot", rev = "23fc42cff37848e51f0d8eaefad1a93941b71e59" }
-librespot-connect = { git = "https://github.com/crmne/librespot", rev = "23fc42cff37848e51f0d8eaefad1a93941b71e59" }
-librespot-core = { git = "https://github.com/crmne/librespot", rev = "23fc42cff37848e51f0d8eaefad1a93941b71e59" }
-librespot-metadata = { git = "https://github.com/crmne/librespot", rev = "23fc42cff37848e51f0d8eaefad1a93941b71e59" }
-librespot-oauth = { git = "https://github.com/crmne/librespot", rev = "23fc42cff37848e51f0d8eaefad1a93941b71e59" }
-librespot-playback = { git = "https://github.com/crmne/librespot", rev = "23fc42cff37848e51f0d8eaefad1a93941b71e59" }
-librespot-protocol = { git = "https://github.com/crmne/librespot", rev = "23fc42cff37848e51f0d8eaefad1a93941b71e59" }
+# crmne/librespot spotifast-dev: librespot's dev branch, which already has
+# the queue controls and the Windows on ARM login, plus the patches it has
+# not merged yet. Each is open as a librespot-org/librespot pull request:
+# normalisation-factor reporting for the visualisers (#1798), a stop and a
+# distinct event when Spotify refuses an audio key (#1799), socket setup
+# inside the access-point timeout (#1800), ranged playlist reads (#1801), an
+# in-memory credential cache for platform storage (#1802), bounded socket
+# setup that races IPv6 and IPv4 (#1803), playback recovery after a session
+# disconnect (#1765), and a volume set while the device is inactive (#1770).
+# Every librespot crate comes from the fork so one copy exists. Drop each
+# patch once upstream merges it.
+librespot-audio = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
+librespot-connect = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
+librespot-core = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
+librespot-metadata = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
+librespot-oauth = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
+librespot-playback = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
+librespot-protocol = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
