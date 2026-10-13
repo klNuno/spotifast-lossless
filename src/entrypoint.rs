@@ -690,6 +690,8 @@ pub(crate) fn run() -> eframe::Result<()> {
                     shot: creator_shot.clone(),
                     #[cfg(feature = "demo")]
                     drag: demo_drag,
+                    logic_took: None,
+                    stalls: StallWatch::default(),
                 }))
             }),
         )
@@ -1222,6 +1224,75 @@ struct Shell {
     /// A drag held for `--demo-drag`, if this run shows one.
     #[cfg(feature = "demo")]
     drag: Option<DemoDrag>,
+    /// How long this pass's logic took, until its drawing adds to it.
+    logic_took: Option<std::time::Duration>,
+    stalls: StallWatch,
+}
+
+/// An update (logic and drawing) this long freezes the window visibly.
+const STALL: std::time::Duration = std::time::Duration::from_millis(250);
+/// At most one stall warning in this long; the next counts the rest.
+const STALL_WARNING_GAP: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Notices UI updates slow enough to freeze the window, so a freeze shows
+/// in the log with how long it lasted.
+#[derive(Default)]
+struct StallWatch {
+    /// The first update builds fonts and textures; it is not a freeze.
+    started: bool,
+    warned_at: Option<std::time::Instant>,
+    /// Stalls since the last warning that it did not report.
+    unreported: u32,
+}
+
+impl Shell {
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        let app = &mut *self.app;
+        app.frame_ui(ui);
+        if let Some(receipt) = app.update_receipt.take() {
+            std::thread::spawn(move || {
+                if let Err(error) = receipt.acknowledge() {
+                    log::error!("Could not confirm the update: {error:#}");
+                }
+            });
+        }
+        #[cfg(windows)]
+        self.thumbbar
+            .sync(app.thumb_state(ui.ctx().system_theme() != Some(egui::Theme::Light)));
+    }
+}
+
+impl StallWatch {
+    /// The warning to log for an update that took `took`, if any.
+    fn finished(&mut self, took: std::time::Duration, now: std::time::Instant) -> Option<String> {
+        if !std::mem::replace(&mut self.started, true) || took < STALL {
+            return None;
+        }
+        if self
+            .warned_at
+            .is_some_and(|at| now.duration_since(at) < STALL_WARNING_GAP)
+        {
+            self.unreported += 1;
+            return None;
+        }
+        self.warned_at = Some(now);
+        let mut warning = format!(
+            "the window stalled for {} ms in one update",
+            took.as_millis()
+        );
+        match std::mem::take(&mut self.unreported) {
+            0 => {}
+            1 => warning.push_str(" (and once more since the last warning)"),
+            more => warning.push_str(&format!(" (and {more} more times since the last warning)")),
+        }
+        Some(warning)
+    }
+
+    fn check(&mut self, took: std::time::Duration) {
+        if let Some(warning) = self.finished(took, std::time::Instant::now()) {
+            log::warn!("{warning}");
+        }
+    }
 }
 
 /// A scripted pointer for `--demo-drag`: rest on `from`, press there, glide
@@ -1346,6 +1417,11 @@ impl eframe::App for Shell {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // The last pass's logic drew nothing after it: it was the update.
+        if let Some(took) = self.logic_took.take() {
+            self.stalls.check(took);
+        }
+        let started = std::time::Instant::now();
         // A window restored where no monitor shows it any more (a display
         // unplugged since) comes back onto one.
         if !std::mem::replace(&mut self.recovery_checked, true) {
@@ -1422,21 +1498,14 @@ impl eframe::App for Shell {
             .sync(app.thumb_state(ctx.system_theme() != Some(egui::Theme::Light)));
         #[cfg(feature = "demo")]
         self.drive_shot(ctx);
+        self.logic_took = Some(started.elapsed());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let app = &mut *self.app;
-        app.frame_ui(ui);
-        if let Some(receipt) = app.update_receipt.take() {
-            std::thread::spawn(move || {
-                if let Err(error) = receipt.acknowledge() {
-                    log::error!("Could not confirm the update: {error:#}");
-                }
-            });
-        }
-        #[cfg(windows)]
-        self.thumbbar
-            .sync(app.thumb_state(ui.ctx().system_theme() != Some(egui::Theme::Light)));
+        let started = std::time::Instant::now();
+        let logic_took = self.logic_took.take().unwrap_or_default();
+        self.draw(ui);
+        self.stalls.check(logic_took + started.elapsed());
     }
 
     /// The mini player's window is see-through where the skin leaves it
@@ -1478,6 +1547,37 @@ fn app_icon() -> egui::IconData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A slow update is logged with its length, once per stall, and a
+    /// burst of stalls makes one warning that counts the rest.
+    #[test]
+    fn a_stalled_update_is_logged_once_with_its_length() {
+        use std::time::{Duration, Instant};
+        let mut watch = StallWatch::default();
+        let start = Instant::now();
+        assert_eq!(
+            watch.finished(Duration::from_secs(2), start),
+            None,
+            "the first update sets the window up"
+        );
+        assert_eq!(watch.finished(Duration::from_millis(16), start), None);
+        assert_eq!(
+            watch
+                .finished(Duration::from_millis(1200), start)
+                .as_deref(),
+            Some("the window stalled for 1200 ms in one update")
+        );
+        let soon = start + Duration::from_secs(1);
+        assert_eq!(watch.finished(Duration::from_millis(400), soon), None);
+        assert_eq!(watch.finished(Duration::from_millis(300), soon), None);
+        let later = start + STALL_WARNING_GAP;
+        assert_eq!(
+            watch.finished(Duration::from_millis(900), later).as_deref(),
+            Some(
+                "the window stalled for 900 ms in one update (and 2 more times since the last warning)"
+            )
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
