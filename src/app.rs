@@ -591,6 +591,10 @@ pub struct App {
     pending_album_queues: HashMap<u64, PendingAlbumQueue>,
     pending_queue_batches: HashMap<u64, Target>,
     album_queue_serial: u64,
+    /// The latest `play-search` command. Its answer plays only while this
+    /// still names it: a newer search or anything the user started since
+    /// takes precedence over a search that finishes late.
+    play_search_serial: u64,
     last_album_queue: Option<(String, Instant)>,
     /// The account's playlist tree from Spotify, folders and all; empty
     /// until the session answers.
@@ -1040,6 +1044,7 @@ impl App {
             pending_album_queues: HashMap::new(),
             pending_queue_batches: HashMap::new(),
             album_queue_serial: 0,
+            play_search_serial: 0,
             last_album_queue: None,
             rootlist: Vec::new(),
             rootlist_cache: session.rootlist.clone(),
@@ -2230,9 +2235,7 @@ impl App {
             LocalPlayback::Ready { device_id } => {
                 self.local_device_id = Some(device_id.clone());
                 self.local_ready = true;
-                if let Some(request) = self.queued_play.take() {
-                    self.play_request(request, false);
-                }
+                self.replay_queued_play();
             }
             LocalPlayback::Unavailable => {
                 self.local_ready = false;
@@ -2617,9 +2620,7 @@ impl App {
             self.on_now_playing_changed();
         }
         if reconnected {
-            if let Some(request) = self.queued_play.take() {
-                self.play_request(request, false);
-            }
+            self.replay_queued_play();
             // Retry names requested before the session connected.
             let unresolved: Vec<String> = self
                 .user_names
@@ -3698,6 +3699,9 @@ impl App {
                 }),
                 ControlCommand::OpenLink(uri) => Some(Action::OpenLink(uri)),
                 ControlCommand::Transfer(device_id) => Some(Action::Transfer(device_id)),
+                ControlCommand::PlaySearch { kind, query } => {
+                    Some(Action::PlaySearch { kind, query })
+                }
                 ControlCommand::RefreshDevices => Some(Action::RefreshDevices),
             };
             if let Some(action) = action {
@@ -6667,6 +6671,37 @@ impl App {
                     self.search.playlists_pending = split;
                 }
             }
+            ApiResponse::PlaySearch {
+                query,
+                serial,
+                result,
+            } => {
+                if serial != self.play_search_serial {
+                    // Superseded by a newer search or by something the
+                    // user played meanwhile.
+                    return;
+                }
+                match result {
+                    Ok(Some(uri)) => self.actions.push(Action::PlaySearchMatch { uri, serial }),
+                    Ok(None) => self.toast(
+                        gettext(
+                            self.locale,
+                            // Translators: {query} is the words someone searched for.
+                            "Nothing on Spotify matches \u{201c}{query}\u{201d}",
+                        )
+                        .replace("{query}", &query),
+                    ),
+                    Err(error) => self.toast_error(
+                        gettext(
+                            self.locale,
+                            // Translators: {query} is the words someone searched for; {error} is an error message.
+                            "Couldn't search for \u{201c}{query}\u{201d}: {error}",
+                        )
+                        .replace("{query}", &query)
+                        .replace("{error}", &error.to_string()),
+                    ),
+                }
+            }
             ApiResponse::SearchPlaylists {
                 query,
                 serial,
@@ -7511,6 +7546,27 @@ impl App {
     /// in one ordered exchange: two independent requests race, and shuffle
     /// sometimes lost.
     fn play_request(&mut self, request: PlayRequest, shuffle_first: bool) {
+        // Whatever starts now outranks a play-search still in flight.
+        self.supersede_play_search();
+        self.start_play(request, shuffle_first);
+    }
+
+    /// A playback choice made now: a play-search still in flight must not
+    /// undo it when it answers.
+    fn supersede_play_search(&mut self) {
+        self.play_search_serial = self.play_search_serial.wrapping_add(1);
+    }
+
+    /// Replays a play that waited for the engine or the session. It keeps
+    /// the precedence it took when it was asked for, so a play-search sent
+    /// while it waited still plays its match.
+    fn replay_queued_play(&mut self) {
+        if let Some(request) = self.queued_play.take() {
+            self.start_play(request, false);
+        }
+    }
+
+    fn start_play(&mut self, request: PlayRequest, shuffle_first: bool) {
         // Shuffle applies across contexts until disabled. A selected row still
         // starts first; otherwise choose a random starting track.
         let mut request = request;
@@ -9024,6 +9080,14 @@ impl App {
         ) {
             self.leave_lyrics_fullscreen(ctx);
         }
+        // Pausing or skipping while a play-search is in flight is a newer
+        // choice; seeking and volume leave the search to play its match.
+        if matches!(
+            &action,
+            Action::TogglePlay | Action::Next | Action::Previous
+        ) {
+            self.supersede_play_search();
+        }
         match action {
             Action::Open(page) => self.open(page),
             Action::OpenSongRadio { uri, track } => self.open_song_radio(&uri, &track),
@@ -9073,6 +9137,22 @@ impl App {
                 request.offset_uri = offset_uri;
                 request.offset_position = offset_index;
                 self.play_request(request, false);
+            }
+            // Answered by the search's response, which plays the match.
+            // Taking the serial here, not when the command arrives, keeps
+            // a play queued before it from superseding it.
+            Action::PlaySearch { kind, query } => {
+                self.play_search_serial = self.play_search_serial.wrapping_add(1);
+                self.backend.api(ApiRequest::PlaySearch {
+                    kind,
+                    query,
+                    serial: self.play_search_serial,
+                });
+            }
+            Action::PlaySearchMatch { uri, serial } => {
+                if serial == self.play_search_serial {
+                    self.play_request(PlayRequest::context(uri), false);
+                }
             }
             Action::PlayUris { uris, index } => {
                 if uris.is_empty() {
@@ -24563,6 +24643,139 @@ mod tests {
             app.actions
         );
         assert!(queue.lock().expect("the queue").is_empty());
+    }
+
+    /// A play-search that finishes late never replaces a newer search or
+    /// something the user started after it, and a play asked for before it
+    /// never supersedes it, even within one batch of commands.
+    #[test]
+    fn a_late_play_search_never_overrides_a_newer_choice() {
+        // #given
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let queue: std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>> = Default::default();
+        app.control_commands = Some(std::sync::Arc::clone(&queue));
+        let search = |query: &str| ControlCommand::PlaySearch {
+            kind: "track".to_owned(),
+            query: query.to_owned(),
+        };
+        let found = |serial: u64, uri: &str| ApiResponse::PlaySearch {
+            query: "words".to_owned(),
+            serial,
+            result: Ok(Some(uri.to_owned())),
+        };
+        let send = |app: &mut App, commands: Vec<ControlCommand>| {
+            queue.lock().expect("the queue").extend(commands);
+            app.handle_control_commands();
+            app.apply_actions(&ctx);
+            app.play_search_serial
+        };
+        let answer = |app: &mut App, serial: u64, uri: &str| {
+            app.handle_api(found(serial, uri));
+            app.apply_actions(&ctx);
+        };
+        // The context the app last started, shown at once.
+        let playing = |app: &App| {
+            app.assumed_context
+                .as_ref()
+                .map(|context| context.uri.clone())
+        };
+
+        // #when two searches are sent and the older answers last
+        let first = send(&mut app, vec![search("first")]);
+        let second = send(&mut app, vec![search("second")]);
+        answer(&mut app, second, "spotify:track:second");
+        answer(&mut app, first, "spotify:track:first");
+
+        // #then only the newer search plays
+        assert_eq!(playing(&app).as_deref(), Some("spotify:track:second"));
+
+        // #when the user plays something before a search answers
+        let third = send(&mut app, vec![search("third")]);
+        send(
+            &mut app,
+            vec![ControlCommand::PlayUri("spotify:album:chosen".to_owned())],
+        );
+        answer(&mut app, third, "spotify:track:third");
+
+        // #then the user's choice stands
+        assert_eq!(playing(&app).as_deref(), Some("spotify:album:chosen"));
+
+        // #when one batch asks for a URI and then a search
+        queue.lock().expect("the queue").extend([
+            ControlCommand::PlayUri("spotify:album:older".to_owned()),
+            search("fourth"),
+        ]);
+        app.handle_control_commands();
+
+        // #then the search takes precedence after the URI, in command order
+        assert!(
+            matches!(
+                app.actions.as_slice(),
+                [Action::PlayContext { .. }, Action::PlaySearch { query, .. }] if query == "fourth"
+            ),
+            "{:?}",
+            app.actions
+        );
+        app.apply_actions(&ctx);
+        let fourth = app.play_search_serial;
+        answer(&mut app, fourth, "spotify:track:fourth");
+
+        // #then the search, asked for last, still plays
+        assert_eq!(playing(&app).as_deref(), Some("spotify:track:fourth"));
+
+        // #when a search arrives in the same frame as an older search's answer
+        let fifth = send(&mut app, vec![search("fifth")]);
+        queue.lock().expect("the queue").push(search("sixth"));
+        app.handle_control_commands();
+        app.handle_api(found(fifth, "spotify:track:fifth"));
+        app.apply_actions(&ctx);
+        // The serial the newer search was sent with; a stray play of the
+        // older match would have moved the current one past it.
+        let sixth = fifth.wrapping_add(1);
+        answer(&mut app, sixth, "spotify:track:sixth");
+
+        // #then the older answer, though current when it arrived, never plays
+        assert_eq!(playing(&app).as_deref(), Some("spotify:track:sixth"));
+
+        // #when a play waits for the engine and a search is sent meanwhile
+        send(
+            &mut app,
+            vec![ControlCommand::PlayUri("spotify:album:waiting".to_owned())],
+        );
+        assert!(app.queued_play.is_some(), "the engine is not connected");
+        let seventh = send(&mut app, vec![search("seventh")]);
+        app.handle_playback(LocalPlayback::Ready {
+            device_id: "local".to_owned(),
+        });
+        answer(&mut app, seventh, "spotify:track:seventh");
+
+        // #then replaying the waiting play does not cancel the newer search
+        assert_eq!(playing(&app).as_deref(), Some("spotify:track:seventh"));
+
+        // #when the listener pauses, skips or steps back before a search answers
+        for transport in [Action::TogglePlay, Action::Next, Action::Previous] {
+            let pending = send(&mut app, vec![search("pending")]);
+            app.actions.push(transport.clone());
+            app.apply_actions(&ctx);
+            answer(&mut app, pending, "spotify:track:pending");
+
+            // #then that choice stands
+            assert_eq!(
+                playing(&app).as_deref(),
+                Some("spotify:track:seventh"),
+                "{transport:?}"
+            );
+        }
+
+        // #when the listener only changes the volume
+        let louder = send(&mut app, vec![search("louder")]);
+        app.actions.push(Action::SetVolume(80));
+        app.apply_actions(&ctx);
+        answer(&mut app, louder, "spotify:track:louder");
+
+        // #then the search still plays its match
+        assert_eq!(playing(&app).as_deref(), Some("spotify:track:louder"));
     }
 
     /// Control clients can set state, seek, play a URI, and transfer playback.
