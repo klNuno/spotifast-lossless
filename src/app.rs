@@ -207,6 +207,16 @@ impl PendingPaste {
     }
 }
 
+/// An automatic update step put off on a metered connection or without
+/// internet, taken once the connection is neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeldUpdate {
+    /// Look at how this copy was installed, to see if it can update itself.
+    Inspect,
+    /// Download the release.
+    Download,
+}
+
 /// How the application is being started.
 #[derive(Clone, Copy, Debug)]
 pub struct AppOptions {
@@ -617,6 +627,7 @@ pub struct App {
     pub update_support: Option<Result<crate::updates::Installation, String>>,
     pub update_restart_arguments: Vec<String>,
     pub update_receipt: Option<fastframe_update::Receipt>,
+    held_update: Option<HeldUpdate>,
     /// Winamp window state and active skin.
     pub winamp: crate::winamp::WinampState,
     /// The spectrum behind the player bar, when that is chosen.
@@ -1048,6 +1059,7 @@ impl App {
             update_support: None,
             update_restart_arguments: Vec::new(),
             update_receipt: None,
+            held_update: None,
             winamp: crate::winamp::WinampState::new(session.winamp_pos, tap, eq),
             player_bar_analyser: crate::vis::WideAnalyser::default(),
         };
@@ -2105,7 +2117,7 @@ impl App {
                         && self.settings.download_updates_automatically
                         && matches!(self.update_download, crate::updates::DownloadState::Idle)
                     {
-                        self.actions.push(Action::DownloadUpdate);
+                        self.take_update_step(HeldUpdate::Download);
                     }
                     self.update_support = Some(result);
                 }
@@ -2143,7 +2155,7 @@ impl App {
                                     crate::updates::DownloadState::Idle
                                 )
                             {
-                                self.backend.send(Command::InspectUpdate);
+                                self.take_update_step(HeldUpdate::Inspect);
                             }
                         }
                         Ok(None) => {
@@ -3054,13 +3066,25 @@ impl App {
             .retain(|toast| toast.created.elapsed() < TOAST_LIFETIME);
         self.maybe_suggest_personal_app();
 
+        // Not on a metered connection or without internet: the check waits
+        // for a connection that will do, and checking by hand still works.
         if self.settings.check_for_updates
             && !self.offline
+            && !self.downloads_wait()
             && self
                 .last_update_check
                 .is_none_or(|at| at.elapsed() >= crate::updates::CHECK_INTERVAL)
         {
             self.check_for_updates(false);
+        }
+        // The step stays held while automatic downloads are off, so turning
+        // them back on picks it up.
+        if !self.downloads_wait()
+            && self.settings.download_updates_automatically
+            && matches!(self.update_download, crate::updates::DownloadState::Idle)
+            && let Some(step) = self.held_update.take()
+        {
+            self.take_update_step(step);
         }
 
         if self.is_connected() && !self.offline {
@@ -3752,8 +3776,12 @@ impl App {
                 self.media_art = Some((url.to_owned(), file.clone()));
                 Some(file)
             }
+            // On a metered connection the controls go without the large
+            // cover rather than download one for every song.
             None => {
-                self.backend.art().prefetch(ctx, url);
+                if !self.metered() {
+                    self.backend.art().prefetch(ctx, url);
+                }
                 None
             }
         }
@@ -10503,6 +10531,35 @@ impl App {
             self.winamp.geometry.remember(ctx);
         } else if self.lyrics_fullscreen.is_none() && self.lyrics_fullscreen_restoring.is_none() {
             self.window_geometry.remember(ctx);
+        }
+    }
+
+    /// Whether the system reports the connection as metered or charged by
+    /// use, so automatic downloads wait.
+    fn metered(&self) -> bool {
+        self.power.conditions().metered
+    }
+
+    /// Whether automatic downloads wait: on a metered connection, or while
+    /// the system reports no way to the internet, where a download would
+    /// only fail and stop the next automatic one. That report counts only
+    /// where the app follows it (macOS): Windows's hint can say there is no
+    /// internet where Spotify and GitHub still answer.
+    fn downloads_wait(&self) -> bool {
+        let conditions = self.power.conditions();
+        conditions.metered || (self.follows_reachability && !conditions.online)
+    }
+
+    /// Takes an automatic update step now, or holds it until the connection
+    /// is neither metered nor down.
+    fn take_update_step(&mut self, step: HeldUpdate) {
+        if self.downloads_wait() {
+            self.held_update = Some(step);
+            return;
+        }
+        match step {
+            HeldUpdate::Inspect => self.backend.send(Command::InspectUpdate),
+            HeldUpdate::Download => self.actions.push(Action::DownloadUpdate),
         }
     }
 
@@ -18843,6 +18900,158 @@ mod tests {
         assert_eq!(app.media_art, None, "a path into a deleted cache");
 
         let _ = std::fs::remove_file(&file);
+    }
+
+    /// Changes the conditions as the power reader would.
+    fn change_power(app: &App, change: impl FnOnce(&mut crate::power::Conditions)) {
+        let mut conditions = app.power.conditions();
+        change(&mut conditions);
+        app.power.set_conditions(conditions);
+    }
+
+    /// On a metered connection the media controls go without the large
+    /// cover rather than download one for every song.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn a_metered_connection_downloads_no_cover_for_the_controls() {
+        let mut app = headless_app();
+        let ctx = egui::Context::default();
+        let url = "https://i.scdn.co/image/metered";
+        change_power(&app, |conditions| conditions.metered = true);
+        assert_eq!(app.media_art_file(&ctx, url), None);
+        assert!(
+            app.backend.art().prefetch(&ctx, url),
+            "nothing should have asked for it before"
+        );
+    }
+
+    /// The daily update check waits for a connection that is not metered,
+    /// and, where the app follows the system's word on it, for the internet.
+    /// Where it does not (Windows), a "no internet" hint holds nothing back.
+    #[test]
+    fn a_metered_connection_puts_off_the_update_check() {
+        for (metered, online, follows, checked, why) in [
+            (false, true, true, true, "not checked on a free network"),
+            (true, true, false, false, "checked on a metered network"),
+            (false, false, true, false, "checked without internet"),
+            (
+                false,
+                false,
+                false,
+                true,
+                "held by a hint it does not follow",
+            ),
+        ] {
+            let mut app = headless_app();
+            app.settings.check_for_updates = true;
+            app.last_update_check = None;
+            app.follows_reachability = follows;
+            change_power(&app, |conditions| {
+                conditions.metered = metered;
+                conditions.online = online;
+            });
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                app.background_frame(ui.ctx());
+            });
+            output.textures_delta.clear();
+            assert_eq!(app.last_update_check.is_some(), checked, "{why}");
+        }
+    }
+
+    /// An automatic download put off on a metered connection starts once the
+    /// connection is not, rather than at the next daily check, and not while
+    /// the connection is down: a download that fails would stop the next
+    /// automatic one.
+    #[test]
+    fn an_update_held_on_a_metered_connection_downloads_when_it_is_not() {
+        use crate::updates::{DownloadState, Installation, Kind};
+        let mut app = headless_app();
+        app.settings.download_updates_automatically = true;
+        app.settings.check_for_updates = false;
+        // Where the app follows the system's word on reaching the internet.
+        app.follows_reachability = true;
+        app.update = Some(crate::updates::Release {
+            version: "9.9.9".into(),
+            url: "https://example.invalid/release".into(),
+        });
+        change_power(&app, |conditions| conditions.metered = true);
+        app.handle_backend_events(vec![Event::UpdateSupport(Ok(Installation {
+            executable: "/test/spotifast".into(),
+            kind: Kind::Portable,
+        }))]);
+        let ctx = egui::Context::default();
+        let pass = |app: &mut App| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                app.background_frame(ui.ctx());
+            });
+            output.textures_delta.clear();
+        };
+        pass(&mut app);
+        assert!(
+            matches!(app.update_download, DownloadState::Idle),
+            "downloaded on a metered network"
+        );
+
+        // A metered connection that drops reads as neither metered nor
+        // online: still nothing to download over.
+        change_power(&app, |conditions| {
+            conditions.metered = false;
+            conditions.online = false;
+        });
+        pass(&mut app);
+        assert!(
+            matches!(app.update_download, DownloadState::Idle),
+            "downloaded without internet"
+        );
+
+        change_power(&app, |conditions| conditions.online = true);
+        pass(&mut app);
+        assert!(matches!(
+            app.update_download,
+            DownloadState::Downloading { .. }
+        ));
+    }
+
+    /// A step held while automatic downloads are off waits for them to be
+    /// turned back on, rather than being dropped when the network comes back.
+    #[test]
+    fn a_held_update_waits_for_automatic_downloads_to_be_turned_on() {
+        use crate::updates::{DownloadState, Installation, Kind};
+        let mut app = headless_app();
+        app.settings.download_updates_automatically = true;
+        app.settings.check_for_updates = false;
+        app.update = Some(crate::updates::Release {
+            version: "9.9.9".into(),
+            url: "https://example.invalid/release".into(),
+        });
+        change_power(&app, |conditions| conditions.metered = true);
+        app.handle_backend_events(vec![Event::UpdateSupport(Ok(Installation {
+            executable: "/test/spotifast".into(),
+            kind: Kind::Portable,
+        }))]);
+        let ctx = egui::Context::default();
+        let pass = |app: &mut App| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                app.background_frame(ui.ctx());
+            });
+            output.textures_delta.clear();
+        };
+        pass(&mut app);
+        assert!(app.held_update.is_some());
+
+        app.settings.download_updates_automatically = false;
+        change_power(&app, |conditions| conditions.metered = false);
+        pass(&mut app);
+        assert!(matches!(app.update_download, DownloadState::Idle));
+        assert!(app.held_update.is_some(), "dropped while turned off");
+
+        app.settings.download_updates_automatically = true;
+        pass(&mut app);
+        assert!(matches!(
+            app.update_download,
+            DownloadState::Downloading { .. }
+        ));
     }
 
     /// MPRIS hands the desktop the artwork URL and reads no file, so the
