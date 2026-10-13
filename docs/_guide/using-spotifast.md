@@ -497,6 +497,12 @@ On Windows, the main window's minimize, maximize, and close buttons share the
 top bar with Spotifast's controls. Drag an empty part of that bar to move or
 snap the window, and drag a window edge or corner to resize it.
 
+## Google Cast playback
+
+Google Cast speakers and speaker groups appear in the device picker. Enable
+local playback first, then select the speaker. Spotifast starts Spotify on it,
+and the speaker then plays like any other Spotify Connect device.
+
 ## Radio
 
 Since 0.10.0, **Go to song radio** in a song's menu opens a page

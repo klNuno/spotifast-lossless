@@ -597,6 +597,7 @@ pub fn populate(app: &mut App) {
         address: std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 42)),
         port: 5555,
         path: "/zc".into(),
+        cast: false,
     }];
     app.remote = Some(RemoteSnapshot {
         state: PlaybackState {
@@ -622,6 +623,22 @@ pub fn populate(app: &mut App) {
     }
 }
 
+#[cfg(feature = "demo")]
+fn cast_devices(app: &mut App, connecting: bool) {
+    app.show_devices = true;
+    app.receivers.push(crate::zeroconf::Receiver {
+        name: "Living room".into(),
+        device_id: Some(crate::cast::device_id("Living room")),
+        address: "192.168.1.43".parse().unwrap(),
+        port: 8009,
+        path: "/".into(),
+        cast: true,
+    });
+    if connecting {
+        app.activating_receiver = Some("Living room".into());
+    }
+}
+
 #[cfg(any(test, feature = "demo"))]
 fn sonos_devices(app: &mut App, active: bool) {
     app.show_devices = true;
@@ -631,6 +648,7 @@ fn sonos_devices(app: &mut App, active: bool) {
         address: "192.168.1.10".parse().unwrap(),
         port: 1400,
         path: "/spotifyzc".into(),
+        cast: false,
     }];
     app.devices
         .retain(|device| device.id.as_deref() != Some("office"));
@@ -958,6 +976,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                         app.devices.iter().find(|device| device.is_active).cloned();
                 }
             }
+            "cast-idle" => cast_devices(app, false),
+            "cast-connecting" => cast_devices(app, true),
             // These paired states capture both outcomes of the collection
             // Shuffle click for the PR visual comparison.
             "shuffle-selected" => {
