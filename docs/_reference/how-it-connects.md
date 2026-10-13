@@ -29,7 +29,9 @@ Local playback authorization stays separate from both Web API grants. Its
 browser approval requests only the streaming permission and always shows the
 consent dialog. The playback session uses the account ID verified by either
 Web API grant. A verified personal app can complete sign-in while the shared
-app's verification is still waiting.
+app's verification is still waiting. That verification keeps retrying in the
+background through rate limits without showing the top bar's "Waiting for
+Spotify" spinner, since nothing on screen waits for it.
 
 Web API sign-in opens the browser only after its local callback port is available. If
 port 8989 is occupied, the sign-in screen keeps the error visible. Close the
