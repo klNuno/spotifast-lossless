@@ -20,7 +20,8 @@
 </p>
 
 Spotifast is a Spotify client written in Rust with
-[egui](https://github.com/emilk/egui). It plays music through
+[egui](https://www.egui.rs) and [fastframe](https://fastframe.dev), the
+framework behind a family of native desktop apps. It plays music through
 [librespot](https://github.com/librespot-org/librespot), typically uses
 100–250 MB of RAM, starts in well under a second, and has no browser engine.
 
@@ -141,7 +142,7 @@ is described in [PACKAGING.md](PACKAGING.md).
 
 **Want WhatsApp just as fast and native?** [ZapFast](https://zapfast.rocks)
 is Spotifast's sibling. Both are built on
-[fastframe](https://github.com/crmne/fastframe).
+[fastframe](https://fastframe.dev).
 
 ## Sonos playback
 
@@ -151,7 +152,7 @@ local playback first, then select the speaker in the device picker.
 ## Acknowledgements
 
 Spotifast uses [librespot](https://github.com/librespot-org/librespot),
-[egui](https://github.com/emilk/egui), the [Inter](https://rsms.me/inter/)
+[egui](https://www.egui.rs), [fastframe](https://fastframe.dev), the [Inter](https://rsms.me/inter/)
 typeface (OFL), and [Lucide](https://lucide.dev) icons (ISC).
 
 Spotifast is an independent project and is not affiliated with Spotify.

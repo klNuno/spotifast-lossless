@@ -33,6 +33,7 @@ defaults:
         - Spotify client
         - Rust
         - egui
+        - fastframe
         - librespot
         - Spotify Connect
         - Linux music player
