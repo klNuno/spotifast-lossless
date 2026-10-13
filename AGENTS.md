@@ -19,6 +19,8 @@ everything else. Read the Soloist section of
   lawful support first lands upstream.
 - Do not broaden a task into adjacent features or a general refactor. Preserve
   existing user behaviour unless the task explicitly changes it.
+- Do not add a setting without the maintainer's approval in the issue first;
+  prefer a good default, a shortcut or a command (`CONTRIBUTING.md`, Settings).
 
 ## Architecture
 
