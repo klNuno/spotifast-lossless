@@ -484,6 +484,18 @@ after the radio with the songs on the page.
 Radio comes from Spotify's playback service, so it needs playback on this
 computer to be set up; the page can then play on any device.
 
+## Upcoming albums
+
+Open a `spotify:prerelease:` URI or an `open.spotify.com/prerelease/` link
+with Spotifast to see the artwork, release countdown and track-list preview.
+This requires local playback authorization. Pre-save adds the resolved album
+to your Spotify library and confirms its saved state. Unavailable preview
+tracks cannot start playback.
+
+The browser's **Open in app** action uses the registered `spotify:` handler.
+Pasting an HTTPS address into the browser opens Spotify's website; Spotifast
+does not take over HTTP or HTTPS associations.
+
 ## Playlist covers
 
 **In development, not included in 0.8.0:** open a playlist you own and choose
