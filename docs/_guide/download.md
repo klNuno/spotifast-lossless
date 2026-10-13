@@ -78,6 +78,9 @@ graphics driver, or enable GPU acceleration for the virtual machine.
 To choose which app opens Spotify links, use **Settings → Apps → Default apps**
 in Windows.
 
+Uninstalling while Spotifast runs removes nothing until it is closed. The
+installer offers to close it for you; closing it that way ends it at once.
+
 ## Linux
 
 ### Arch Linux
