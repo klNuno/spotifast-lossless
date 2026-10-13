@@ -475,8 +475,8 @@ fn songs(app: &mut App, ui: &mut egui::Ui, results: &SearchResults, limit: usize
 }
 
 fn artist_card(app: &mut App, ui: &mut egui::Ui, artist: &Artist) {
-    let playing_here =
-        app.playing_context_uri().as_deref() == Some(artist.uri.as_str()) && app.believed_playing();
+    let context_here = app.playing_context_uri().as_deref() == Some(artist.uri.as_str());
+    let playing_here = context_here && app.believed_playing();
     let card = widgets::card(
         ui,
         app,
@@ -486,7 +486,7 @@ fn artist_card(app: &mut App, ui: &mut egui::Ui, artist: &Artist) {
         widgets::CardCover::portrait(playing_here),
     );
     if card.play {
-        if playing_here {
+        if context_here {
             app.actions.push(Action::TogglePlay);
         } else {
             app.actions.push(Action::PlayContext {
@@ -542,8 +542,8 @@ fn album_card(app: &mut App, ui: &mut egui::Ui, album: &crate::api::models::Albu
         album.year().unwrap_or(""),
         crate::api::models::join_names(album.artists.iter().map(|a| a.name.as_str()))
     );
-    let playing_here =
-        app.playing_context_uri().as_deref() == Some(album.uri.as_str()) && app.believed_playing();
+    let context_here = app.playing_context_uri().as_deref() == Some(album.uri.as_str());
+    let playing_here = context_here && app.believed_playing();
     let card = widgets::card(
         ui,
         app,
@@ -553,7 +553,7 @@ fn album_card(app: &mut App, ui: &mut egui::Ui, album: &crate::api::models::Albu
         widgets::CardCover::square(playing_here),
     );
     if card.play {
-        if playing_here {
+        if context_here {
             app.actions.push(Action::TogglePlay);
         } else {
             app.actions.push(Action::PlayContext {
@@ -604,8 +604,8 @@ fn albums_grid(app: &mut App, ui: &mut egui::Ui, results: &SearchResults) {
 }
 
 fn playlist_card(app: &mut App, ui: &mut egui::Ui, playlist: &crate::api::models::Playlist) {
-    let playing_here = app.playing_context_uri().as_deref() == Some(playlist.uri.as_str())
-        && app.believed_playing();
+    let context_here = app.playing_context_uri().as_deref() == Some(playlist.uri.as_str());
+    let playing_here = context_here && app.believed_playing();
     let card = widgets::card(
         ui,
         app,
@@ -616,7 +616,7 @@ fn playlist_card(app: &mut App, ui: &mut egui::Ui, playlist: &crate::api::models
         widgets::CardCover::square(playing_here),
     );
     if card.play {
-        if playing_here {
+        if context_here {
             app.actions.push(Action::TogglePlay);
         } else {
             app.actions.push(Action::PlayContext {

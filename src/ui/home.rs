@@ -154,9 +154,9 @@ fn quick_access(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                     );
                     if hovered && let Some(uri) = uri {
-                        let playing_here = app.playing_context_uri().as_deref()
-                            == Some(uri.as_str())
-                            && app.believed_playing();
+                        let context_here =
+                            app.playing_context_uri().as_deref() == Some(uri.as_str());
+                        let playing_here = context_here && app.believed_playing();
                         let button = Rect::from_center_size(
                             pos2(rect.right() - 28.0, rect.center().y),
                             Vec2::splat(40.0),
@@ -180,7 +180,7 @@ fn quick_access(app: &mut App, ui: &mut egui::Ui) {
                         )
                         .clicked()
                         {
-                            if playing_here {
+                            if context_here {
                                 app.actions.push(Action::TogglePlay);
                             } else {
                                 app.actions.push(Action::PlayContext {
@@ -262,9 +262,9 @@ fn made_for_you(app: &mut App, ui: &mut egui::Ui) {
                         // Translators: {owner} is the name of the playlist's owner.
                         gettext(app.locale, "By {owner}").replace("{owner}", playlist.owner_name())
                     });
-                let playing_here = app.playing_context_uri().as_deref()
-                    == Some(playlist.uri.as_str())
-                    && app.believed_playing();
+                let context_here =
+                    app.playing_context_uri().as_deref() == Some(playlist.uri.as_str());
+                let playing_here = context_here && app.believed_playing();
                 let card = widgets::card(
                     ui,
                     app,
@@ -274,7 +274,7 @@ fn made_for_you(app: &mut App, ui: &mut egui::Ui) {
                     widgets::CardCover::square(playing_here),
                 );
                 if card.play {
-                    if playing_here {
+                    if context_here {
                         app.actions.push(Action::TogglePlay);
                     } else {
                         app.actions.push(Action::PlayContext {
@@ -577,9 +577,9 @@ fn top_artists(app: &mut App, ui: &mut egui::Ui) {
         &gettext(app.locale, "Your top artists"),
         |ui| {
             for artist in &artists {
-                let playing_here = app.playing_context_uri().as_deref()
-                    == Some(artist.uri.as_str())
-                    && app.believed_playing();
+                let context_here =
+                    app.playing_context_uri().as_deref() == Some(artist.uri.as_str());
+                let playing_here = context_here && app.believed_playing();
                 let card = widgets::card(
                     ui,
                     app,
@@ -589,7 +589,7 @@ fn top_artists(app: &mut App, ui: &mut egui::Ui) {
                     widgets::CardCover::portrait(playing_here),
                 );
                 if card.play {
-                    if playing_here {
+                    if context_here {
                         app.actions.push(Action::TogglePlay);
                     } else {
                         app.actions.push(Action::PlayContext {
