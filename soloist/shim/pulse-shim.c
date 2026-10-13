@@ -15,6 +15,9 @@
  *                                 closes, the parent is gone and so is Soloist
  *   PULSE_SHIM_HIDE=OPTION        blanks the argument after OPTION in
  *                                 /proc/self/cmdline once Soloist has read it
+ *   PULSE_SHIM_CHUNK_MS=N         audio per message, 5 to 100 ms instead of
+ *                                 CHUNK_MS, where each message costs more, as
+ *                                 through a virtual machine's network
  *
  * Wire format, little endian. Every message is a type byte, a u32 payload
  * length, then the payload.
@@ -30,8 +33,8 @@
  *               receiver that paces sends one as soon as it reads FORMAT
  *
  * Flow: the ring Soloist writes into is the device buffer. A receiver that
- * acknowledges sets the pace: the shim keeps at most WINDOW_MS of audio in
- * flight, so the output device's own clock drives Soloist and drift never
+ * acknowledges sets the pace: the shim keeps at most WINDOW_MS of audio, or
+ * three messages if that is more, in flight, so the output device's own clock drives Soloist and drift never
  * builds up. A receiver that never acknowledges, or none at all, is fed at
  * the wall clock's rate.
  */
@@ -58,7 +61,7 @@
 
 enum { MSG_FORMAT = 1, MSG_PCM = 2, MSG_FLUSH = 3, MSG_CORK = 4, MSG_VOLUME = 5, MSG_ACK = 6 };
 
-#define CHUNK_MS 10          /* PCM per message */
+#define CHUNK_MS 10          /* PCM per message, unless PULSE_SHIM_CHUNK_MS */
 #define WINDOW_MS 100        /* unacknowledged audio a receiver may hold */
 #define DEFAULT_TARGET_MS 250 /* Soloist asks for the server's default buffer */
 
@@ -690,9 +693,8 @@ static int sender_running(pa_stream *s) { return __atomic_load_n(&s->sender_run,
  * Holds a chunk until the receiver has room for it, reading acknowledgements
  * as they come. Returns at once for a receiver that does not acknowledge.
  */
-static void await_window(pa_stream *s, size_t n, double byte_rate) {
+static void await_window(pa_stream *s, size_t n, uint64_t window) {
     struct link *l = &s->link;
-    uint64_t window = (uint64_t)(byte_rate * WINDOW_MS / 1000.0);
     for (;;) {
         link_read_acks(l);
         if (l->fd < 0 || !l->acks || !sender_running(s)) return;
@@ -702,12 +704,21 @@ static void await_window(pa_stream *s, size_t n, double byte_rate) {
     }
 }
 
+static unsigned chunk_ms(void) {
+    const char *value = getenv("PULSE_SHIM_CHUNK_MS");
+    long ms = value && *value ? strtol(value, NULL, 10) : 0;
+    return ms >= 5 && ms <= 100 ? (unsigned)ms : CHUNK_MS;
+}
+
 /* Feeds the ring to the receiver. Network calls and event posts happen with no lock held. */
 static void *sender_thread(void *arg) {
     pa_stream *s = arg;
     size_t fb = frame_bytes(&s->ss);
     double byte_rate = (double)s->ss.rate * (double)fb;
-    size_t chunk = (s->ss.rate * CHUNK_MS / 1000) * fb;
+    unsigned ms = chunk_ms();
+    size_t chunk = (s->ss.rate * ms / 1000) * fb;
+    unsigned window_ms = ms * 3 > WINDOW_MS ? ms * 3 : WINDOW_MS;
+    uint64_t window = (uint64_t)(byte_rate * window_ms / 1000.0);
     uint8_t *buf = malloc(chunk);
     if (!buf) return NULL;
     double epoch = 0;
@@ -766,7 +777,7 @@ static void *sender_thread(void *arg) {
         if (started) post_stream_event(s, 0);
         if (n == 0) continue;
 
-        await_window(s, n, byte_rate);
+        await_window(s, n, window);
         int acked_flow = s->link.fd >= 0 && s->link.acks;
         if (link_send(&s->link, MSG_PCM, buf, (uint32_t)n) == 0) s->link.sent += n;
         if (!acked_flow) {
