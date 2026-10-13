@@ -920,8 +920,8 @@ async fn end_session(
 }
 
 /// Audio the output still holds when a write of Soloist's audio returns:
-/// the output queue, a little over a dozen of the shim's 10 ms blocks, and
-/// the device's buffer. Soloist adds it to the position it reports.
+/// the output queue, about 130 ms, and the device's buffer. Soloist adds
+/// it to the position it reports.
 fn held_ms(config: &EngineConfig) -> u32 {
     let device = config.buffer_ms.clamp(
         *crate::sink::BUFFER_MS_RANGE.start(),

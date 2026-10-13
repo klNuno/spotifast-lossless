@@ -408,8 +408,10 @@ credential store and passes it to Soloist on start.
 - Its audio comes back through `soloist/shim`, a stand-in `libpulse.so.0`
   that sends the stream over a loopback TCP port into Spotifast's own
   output, so the equalizer, visualisers, volume and output device behave as
-  with librespot. Flow control follows the output device's clock. The
-  shim also provides the `libatomic.so.1` Soloist links, so the system needs
+  with librespot. Flow control follows the output device's clock. Spotifast
+  reads the stream ahead of the output, so a seek drops the audio still in
+  flight at once and a pause stops the output before the blocks behind it
+  play. The shim also provides the `libatomic.so.1` Soloist links, so the system needs
   neither library. That one also answers two of Soloist's calls to the
   system. `fsync` on a directory, which LevelDB makes after each manifest
   and some filesystems refuse, reports success. `bind` puts Soloist's
@@ -424,10 +426,11 @@ credential store and passes it to Soloist on start.
   (`soloist/vm/build-bundle.sh`, `soloist/vm/build-qemu.sh`). It needs no
   administrator, no Windows feature and no restart. QEMU translates the
   machine's code itself, one processor and 160 MiB of memory. Every wakeup
-  of the machine is costly there, so the shim sends 40 ms blocks instead of
-  10 ms and the kernel groups Soloist's timers within 30 ms. On a recent
-  desktop processor the machine then takes about 4 % of one core while
-  Soloist waits and 9 % while FLAC plays. The machine's only network is
+  of the machine is costly there, so the shim sends 100 ms blocks instead
+  of 10 ms, wakes Soloist to write only once 150 ms of its buffer are free,
+  and the kernel groups Soloist's timers within 100 ms. On a recent desktop
+  processor the machine then takes about 4 % of one core while Soloist
+  waits and 6 to 10 % while FLAC plays. The machine's only network is
   QEMU's private one: Spotifast reaches the WebSocket API and the pairing
   endpoint through ports QEMU forwards on loopback, and the shim sends the
   audio to the address QEMU connects to Spotifast's loopback port.

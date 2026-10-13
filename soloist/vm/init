@@ -83,8 +83,11 @@ while IFS= read -r setting; do
     export "${setting?}"
 done </etc/soloist.env
 # Soloist's threads wake on short timers, and every wakeup is costly in an
-# emulated machine. Letting the kernel group them within 30 ms halves them.
-echo 30000000 >/proc/$$/timerslack_ns
+# emulated machine. Letting the kernel group them within 100 ms leaves about
+# 25 timer interrupts a second at idle and 40 while playing, half of what
+# 30 ms leaves. Audio keeps flowing: Soloist's buffer, the blocks in flight
+# and Spotifast's output queue hold about 700 ms between them.
+echo 100000000 >/proc/$$/timerslack_ns
 LD_LIBRARY_PATH=/opt/soloist /opt/soloist/soloist "$@" -k "$key" >$console 2>&1 &
 soloist=$!
 unset key

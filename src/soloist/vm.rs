@@ -49,9 +49,13 @@ const MEMORY_MB: u32 = 160;
 /// often enough that translating it again costs more than the memory.
 const CODE_CACHE_MB: u32 = 64;
 /// Audio per message from the shim. Every message wakes the machine several
-/// times; 40 ms instead of the shim's 10 ms cuts that by four and keeps
-/// 120 ms in flight, close to the 100 ms of a native Soloist.
-const SHIM_CHUNK_MS: u32 = 40;
+/// times; 100 ms instead of the shim's 10 ms cuts that tenfold. The 300 ms
+/// in flight cost nothing on a seek or pause: the receiver reads ahead and
+/// drops them (see `pcm.rs`).
+const SHIM_CHUNK_MS: u32 = 100;
+/// Soloist is told it may write only once this much of its 250 ms buffer is
+/// free, so the shim does not wake it after every message.
+const SHIM_REFILL_MS: u32 = 150;
 /// The data disk's size. The file is sparse: Windows stores only what
 /// Soloist writes, mostly its audio cache.
 const DATA_DISK: u64 = 1 << 30;
@@ -174,6 +178,7 @@ impl Machine {
             ("PULSE_SHIM_LISTEN", format!("{GUEST}:{PAIRING_PORT}")),
             ("PULSE_SHIM_HIDE", "-k".into()),
             ("PULSE_SHIM_CHUNK_MS", SHIM_CHUNK_MS.to_string()),
+            ("PULSE_SHIM_REFILL_MS", SHIM_REFILL_MS.to_string()),
         ];
         let data = self.dir.join("data.img");
         if !data.is_file() {

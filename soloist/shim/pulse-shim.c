@@ -15,9 +15,12 @@
  *                                 closes, the parent is gone and so is Soloist
  *   PULSE_SHIM_HIDE=OPTION        blanks the argument after OPTION in
  *                                 /proc/self/cmdline once Soloist has read it
- *   PULSE_SHIM_CHUNK_MS=N         audio per message, 5 to 100 ms instead of
+ *   PULSE_SHIM_CHUNK_MS=N         audio per message, 5 to 250 ms instead of
  *                                 CHUNK_MS, where each message costs more, as
  *                                 through a virtual machine's network
+ *   PULSE_SHIM_REFILL_MS=N        wakes Soloist to write only once N ms of
+ *                                 its buffer are free, so it writes larger
+ *                                 blocks less often (default: every block)
  *
  * Wire format, little endian. Every message is a type byte, a u32 payload
  * length, then the payload.
@@ -34,9 +37,12 @@
  *
  * Flow: the ring Soloist writes into is the device buffer. A receiver that
  * acknowledges sets the pace: the shim keeps at most WINDOW_MS of audio, or
- * three messages if that is more, in flight, so the output device's own clock drives Soloist and drift never
- * builds up. A receiver that never acknowledges, or none at all, is fed at
- * the wall clock's rate.
+ * three messages if that is more, in flight, so the output device's own
+ * clock drives Soloist and drift never builds up. FLUSH, CORK and VOLUME do
+ * not wait for that window, and a block still waiting for it when a flush
+ * comes is dropped, so a receiver that reads ahead can act on them at once.
+ * A receiver that never acknowledges, or none at all, is fed at the wall
+ * clock's rate.
  */
 #define _GNU_SOURCE
 #include "pa-abi.h"
@@ -70,6 +76,12 @@ enum { MSG_FORMAT = 1, MSG_PCM = 2, MSG_FLUSH = 3, MSG_CORK = 4, MSG_VOLUME = 5,
 static FILE *g_log;
 static pthread_once_t g_log_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* How often Soloist calls in, reported with the PCM statistics. */
+static unsigned long g_writes, g_write_bytes, g_writable, g_waits, g_space_posts, g_timing;
+
+static unsigned long take_count(unsigned long *counter) { return __atomic_exchange_n(counter, 0, __ATOMIC_RELAXED); }
+static void count(unsigned long *counter, unsigned long n) { __atomic_add_fetch(counter, n, __ATOMIC_RELAXED); }
 
 static void log_open(void) {
     const char *path = getenv("PULSE_SHIM_LOG");
@@ -285,7 +297,10 @@ EXPORT void pa_threaded_mainloop_free(pa_threaded_mainloop *m) {
 
 EXPORT void pa_threaded_mainloop_lock(pa_threaded_mainloop *m) { pthread_mutex_lock(&m->mutex); }
 EXPORT void pa_threaded_mainloop_unlock(pa_threaded_mainloop *m) { pthread_mutex_unlock(&m->mutex); }
-EXPORT void pa_threaded_mainloop_wait(pa_threaded_mainloop *m) { pthread_cond_wait(&m->cond, &m->mutex); }
+EXPORT void pa_threaded_mainloop_wait(pa_threaded_mainloop *m) {
+    count(&g_waits, 1);
+    pthread_cond_wait(&m->cond, &m->mutex);
+}
 EXPORT void pa_threaded_mainloop_signal(pa_threaded_mainloop *m, int wait_for_accept) {
     (void)wait_for_accept;
     pthread_cond_broadcast(&m->cond);
@@ -502,11 +517,15 @@ static void stats_feed(struct stats *st, const pa_sample_spec *ss, const uint8_t
     }
 }
 
+/* Logs the PCM statistics and how often Soloist called in since the last report. */
 static void stats_report(struct stats *st, const char *why) {
     if (!st->samples) return;
-    slog("pcm %s: samples=%llu peak=%.1f dBFS below16=%.2f%% below24=%.2f%%",
+    unsigned long writes = take_count(&g_writes), bytes = take_count(&g_write_bytes);
+    slog("pcm %s: samples=%llu peak=%.1f dBFS below16=%.2f%% below24=%.2f%% writes=%lu (%lu bytes each) writable=%lu waits=%lu wakes=%lu timing=%lu",
          why, (unsigned long long)st->samples, st->peak > 0 ? 20 * log10(st->peak) : -999.0,
-         100.0 * (double)st->below16 / (double)st->samples, 100.0 * (double)st->below24 / (double)st->samples);
+         100.0 * (double)st->below16 / (double)st->samples, 100.0 * (double)st->below24 / (double)st->samples,
+         writes, writes ? bytes / writes : 0, take_count(&g_writable), take_count(&g_waits), take_count(&g_space_posts),
+         take_count(&g_timing));
     memset(st, 0, sizeof *st);
 }
 
@@ -624,6 +643,7 @@ struct pa_stream {
     struct stats stats;
     pthread_t sender;
     int sender_run;
+    int wake[2];           /* wakes a sender waiting on the receiver for a flush, cork or stop */
 };
 
 static uint32_t g_stream_index = 1;
@@ -639,6 +659,12 @@ static pa_stream *stream_new(pa_context *c, const char *name, const pa_sample_sp
     s->index = __atomic_fetch_add(&g_stream_index, 1, __ATOMIC_RELAXED);
     pthread_mutex_init(&s->lock, NULL);
     pthread_cond_init(&s->have_data, NULL);
+    if (pipe2(s->wake, O_CLOEXEC | O_NONBLOCK) != 0) {
+        pthread_mutex_destroy(&s->lock);
+        pthread_cond_destroy(&s->have_data);
+        free(s);
+        return NULL;
+    }
     s->link.fd = -1;
     s->link.run = &s->sender_run;
     c->stream = s;
@@ -687,27 +713,43 @@ static void post_stream_event(pa_stream *s, int kind) {
     enqueue(s->c->m, j);
 }
 
-static int sender_running(pa_stream *s) { return __atomic_load_n(&s->sender_run, __ATOMIC_ACQUIRE); }
+static void wake_sender(pa_stream *s) {
+    char b = 1;
+    (void)!write(s->wake[1], &b, 1);
+}
+
+static int control_pending(pa_stream *s) {
+    pthread_mutex_lock(&s->lock);
+    int pending = s->flush_pending || s->cork_changed || s->volume_changed || !s->sender_run;
+    pthread_mutex_unlock(&s->lock);
+    return pending;
+}
 
 /*
- * Holds a chunk until the receiver has room for it, reading acknowledgements
- * as they come. Returns at once for a receiver that does not acknowledge.
+ * Holds a block until the receiver has room for it, reading acknowledgements
+ * as they come. Returns 0 when the block may go (at once for a receiver that
+ * does not acknowledge), 1 when a flush, cork, volume change or stop came
+ * first: those go out before it, and a flush drops it.
  */
-static void await_window(pa_stream *s, size_t n, uint64_t window) {
+static int await_window(pa_stream *s, size_t n, uint64_t window) {
     struct link *l = &s->link;
     for (;;) {
         link_read_acks(l);
-        if (l->fd < 0 || !l->acks || !sender_running(s)) return;
-        if (l->sent - l->acked + n <= window) return;
-        struct pollfd p = {.fd = l->fd, .events = POLLIN};
-        poll(&p, 1, 50); /* also rechecks sender_run while a receiver is stalled */
+        if (control_pending(s)) return 1;
+        if (l->fd < 0 || !l->acks) return 0;
+        if (l->sent - l->acked + n <= window) return 0;
+        struct pollfd p[2] = {{.fd = l->fd, .events = POLLIN}, {.fd = s->wake[0], .events = POLLIN}};
+        if (poll(p, 2, 1000) > 0 && p[1].revents) {
+            char drain[64];
+            while (read(s->wake[0], drain, sizeof drain) > 0) {}
+        }
     }
 }
 
-static unsigned chunk_ms(void) {
-    const char *value = getenv("PULSE_SHIM_CHUNK_MS");
-    long ms = value && *value ? strtol(value, NULL, 10) : 0;
-    return ms >= 5 && ms <= 100 ? (unsigned)ms : CHUNK_MS;
+static unsigned env_ms(const char *name, unsigned fallback, unsigned lo, unsigned hi) {
+    const char *value = getenv(name);
+    long ms = value && *value ? strtol(value, NULL, 10) : -1;
+    return ms >= (long)lo && ms <= (long)hi ? (unsigned)ms : fallback;
 }
 
 /* Feeds the ring to the receiver. Network calls and event posts happen with no lock held. */
@@ -715,19 +757,20 @@ static void *sender_thread(void *arg) {
     pa_stream *s = arg;
     size_t fb = frame_bytes(&s->ss);
     double byte_rate = (double)s->ss.rate * (double)fb;
-    unsigned ms = chunk_ms();
+    unsigned ms = env_ms("PULSE_SHIM_CHUNK_MS", CHUNK_MS, 5, 250);
     size_t chunk = (s->ss.rate * ms / 1000) * fb;
     unsigned window_ms = ms * 3 > WINDOW_MS ? ms * 3 : WINDOW_MS;
     uint64_t window = (uint64_t)(byte_rate * window_ms / 1000.0);
+    size_t refill = (size_t)(byte_rate * env_ms("PULSE_SHIM_REFILL_MS", 0, 0, 1000) / 1000.0);
     uint8_t *buf = malloc(chunk);
     if (!buf) return NULL;
+    size_t held = 0; /* bytes in buf, taken from the ring and not sent yet */
     double epoch = 0;
     uint64_t paced = 0;
     double last_report = mono_now();
     int log = logging();
 
     for (;;) {
-        size_t n = 0;
         int flush = 0, cork = -1, volume = 0, started = 0, underflow = 0;
 
         pthread_mutex_lock(&s->lock);
@@ -735,33 +778,37 @@ static void *sender_thread(void *arg) {
             pthread_mutex_unlock(&s->lock);
             break;
         }
-        if (s->flush_pending) { s->flush_pending = 0; flush = 1; }
+        if (s->flush_pending) { s->flush_pending = 0; flush = 1; held = 0; }
         if (s->cork_changed) { s->cork_changed = 0; cork = s->corked; }
         if (s->volume_changed) { s->volume_changed = 0; volume = 1; }
-        if (s->corked || s->len == 0) {
-            if (s->playing && !s->corked) {
+        if (!held && !s->corked) {
+            if (s->len > 0) {
+                size_t n = s->len < chunk ? s->len : chunk;
+                n -= n % fb;
+                if (n == 0) n = s->len;
+                size_t first = s->cap - s->head < n ? s->cap - s->head : n;
+                memcpy(buf, s->ring + s->head, first);
+                memcpy(buf + first, s->ring, n - first);
+                s->head = (s->head + n) % s->cap;
+                s->len -= n;
+                s->taken += (int64_t)n;
+                held = n;
+                if (!s->playing) { s->playing = 1; started = 1; }
+                if (log) stats_feed(&s->stats, &s->ss, buf, n);
+            } else if (s->playing) {
                 s->playing = 0;
                 underflow = 1;
             }
-            if (!flush && cork < 0 && !volume && !underflow) pthread_cond_wait(&s->have_data, &s->lock);
-        } else {
-            n = s->len < chunk ? s->len : chunk;
-            n -= n % fb;
-            if (n == 0) n = s->len;
-            size_t first = s->cap - s->head < n ? s->cap - s->head : n;
-            memcpy(buf, s->ring + s->head, first);
-            memcpy(buf + first, s->ring, n - first);
-            s->head = (s->head + n) % s->cap;
-            s->len -= n;
-            s->taken += (int64_t)n;
-            if (!s->playing) { s->playing = 1; started = 1; }
-            if (log) stats_feed(&s->stats, &s->ss, buf, n);
         }
+        int idle = !flush && cork < 0 && !volume && !started && !underflow && (s->corked || !held);
+        if (idle) pthread_cond_wait(&s->have_data, &s->lock);
         if (log && mono_now() - last_report >= 5.0) {
             last_report = mono_now();
             stats_report(&s->stats, "5s");
         }
+        int corked = s->corked;
         pthread_mutex_unlock(&s->lock);
+        if (idle) continue;
 
         link_try_connect(&s->link, &s->ss);
         if (flush) { link_send(&s->link, MSG_FLUSH, NULL, 0); epoch = 0; }
@@ -775,11 +822,11 @@ static void *sender_thread(void *arg) {
             post_stream_event(s, 1);
         }
         if (started) post_stream_event(s, 0);
-        if (n == 0) continue;
+        if (!held || corked) continue;
 
-        await_window(s, n, window);
+        if (await_window(s, held, window)) continue;
         int acked_flow = s->link.fd >= 0 && s->link.acks;
-        if (link_send(&s->link, MSG_PCM, buf, (uint32_t)n) == 0) s->link.sent += n;
+        if (link_send(&s->link, MSG_PCM, buf, (uint32_t)held) == 0) s->link.sent += held;
         if (!acked_flow) {
             /* Nobody sets the pace: keep the wall clock's, with no catch-up burst after a stall. */
             double now = mono_now();
@@ -787,16 +834,22 @@ static void *sender_thread(void *arg) {
                 epoch = now;
                 paced = 0;
             }
-            paced += n;
+            paced += held;
             double due = epoch + (double)paced / byte_rate;
             if (due > now) usleep((useconds_t)((due - now) * 1e6));
         }
+        held = 0;
         link_read_acks(&s->link);
         pthread_mutex_lock(&s->lock);
         s->in_flight = s->link.fd >= 0 && s->link.acks ? (int64_t)(s->link.sent - s->link.acked) : 0;
         s->held_us = s->link.fd >= 0 && s->link.acks ? s->link.held_us : 0;
+        /* Soloist is woken to write once enough of its buffer is free. */
+        int refill_now = s->len + refill <= s->target;
         pthread_mutex_unlock(&s->lock);
-        if (!__atomic_exchange_n(&s->space_posted, 1, __ATOMIC_ACQ_REL)) post_stream_event(s, 2);
+        if (refill_now && !__atomic_exchange_n(&s->space_posted, 1, __ATOMIC_ACQ_REL)) {
+            count(&g_space_posts, 1);
+            post_stream_event(s, 2);
+        }
     }
     if (log) stats_report(&s->stats, "end");
     link_close(&s->link, "stream ended");
@@ -854,6 +907,7 @@ EXPORT size_t pa_stream_writable_size(const pa_stream *cs) {
     pthread_mutex_lock(&s->lock);
     size_t w = s->len >= s->target ? 0 : s->target - s->len;
     pthread_mutex_unlock(&s->lock);
+    count(&g_writable, 1);
     return w;
 }
 
@@ -874,6 +928,8 @@ EXPORT int pa_stream_write(pa_stream *s, const void *data, size_t nbytes, pa_fre
     s->write_index += (int64_t)nbytes;
     pthread_cond_signal(&s->have_data);
     pthread_mutex_unlock(&s->lock);
+    count(&g_writes, 1);
+    count(&g_write_bytes, nbytes);
     if (free_cb) free_cb((void *)data);
     return 0;
 }
@@ -902,6 +958,7 @@ EXPORT pa_operation *pa_stream_cork(pa_stream *s, int b, pa_stream_success_cb_t 
         s->cork_changed = 1;
         if (s->corked) s->playing = 0;
         pthread_cond_signal(&s->have_data);
+        wake_sender(s);
     }
     pthread_mutex_unlock(&s->lock);
     return stream_op(s, cb, u);
@@ -916,6 +973,7 @@ EXPORT pa_operation *pa_stream_flush(pa_stream *s, pa_stream_success_cb_t cb, vo
     s->flush_pending = 1;
     s->playing = 0;
     pthread_cond_signal(&s->have_data);
+    wake_sender(s);
     pthread_mutex_unlock(&s->lock);
     return stream_op(s, cb, u);
 }
@@ -950,6 +1008,7 @@ static void job_timing(struct job *j) {
 }
 
 EXPORT pa_operation *pa_stream_update_timing_info(pa_stream *s, pa_stream_success_cb_t cb, void *u) {
+    count(&g_timing, 1);
     pa_operation *o = op_new();
     struct job *j = job_new(job_timing);
     j->a = s;
@@ -965,6 +1024,7 @@ EXPORT int pa_stream_disconnect(pa_stream *s) {
     int running = s->sender_run;
     __atomic_store_n(&s->sender_run, 0, __ATOMIC_RELEASE);
     pthread_cond_signal(&s->have_data);
+    wake_sender(s);
     pthread_mutex_unlock(&s->lock);
     if (running) {
         pthread_join(s->sender, NULL);
@@ -978,6 +1038,8 @@ EXPORT int pa_stream_disconnect(pa_stream *s) {
 static void stream_release(pa_stream *s) {
     if (!s || __atomic_sub_fetch(&s->refs, 1, __ATOMIC_ACQ_REL) != 0) return;
     free(s->ring);
+    close(s->wake[0]);
+    close(s->wake[1]);
     pthread_mutex_destroy(&s->lock);
     pthread_cond_destroy(&s->have_data);
     free(s);
@@ -1038,6 +1100,7 @@ EXPORT pa_operation *pa_context_set_sink_input_volume(pa_context *c, uint32_t id
         pthread_mutex_lock(&c->stream->lock);
         c->stream->volume_changed = 1;
         pthread_cond_signal(&c->stream->have_data);
+        wake_sender(c->stream);
         pthread_mutex_unlock(&c->stream->lock);
     }
     pa_operation *o = op_new();
