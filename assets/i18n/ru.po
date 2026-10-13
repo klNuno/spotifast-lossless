@@ -1323,6 +1323,10 @@ msgstr "Воспроизведение без потерь"
 msgid "Soloist client key"
 msgstr "Клиентский ключ Soloist"
 
+#: src/ui/settings.rs
+msgid "Get a key"
+msgstr "Получить ключ"
+
 #. Translators: {status} is a playback state such as Ready or Not set up.
 #: src/ui/settings.rs:463
 #, rust-format

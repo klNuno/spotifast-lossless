@@ -1317,6 +1317,10 @@ msgstr "Kayıpsız çalma"
 msgid "Soloist client key"
 msgstr "Soloist istemci anahtarı"
 
+#: src/ui/settings.rs
+msgid "Get a key"
+msgstr "Anahtar al"
+
 #. Translators: {status} is a playback state such as Ready or Not set up.
 #: src/ui/settings.rs:463
 #, rust-format

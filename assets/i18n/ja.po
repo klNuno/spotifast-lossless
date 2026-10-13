@@ -1308,6 +1308,10 @@ msgstr "ロスレス再生"
 msgid "Soloist client key"
 msgstr "Soloistクライアントキー"
 
+#: src/ui/settings.rs
+msgid "Get a key"
+msgstr "キーを取得"
+
 #. Translators: {status} is a playback state such as Ready or Not set up.
 #: src/ui/settings.rs:463
 #, rust-format

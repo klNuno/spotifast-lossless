@@ -61,6 +61,9 @@ impl<'a> RowText<'a> {
 
 /// The guide to writing a palette file for the themes folder.
 const THEMES_GUIDE_URL: &str = "https://spotifast.rocks/settings-and-files/#custom-themes";
+/// Spotify's guide to creating the Soloist client key lossless playback needs.
+const SOLOIST_KEY_GUIDE_URL: &str =
+    "https://developer.spotify.com/documentation/soloist/tutorials/getting-started";
 
 fn section_matches(needle: &str, title: &str, rows: &[RowText<'_>]) -> bool {
     let needle = needle.trim().to_lowercase();
@@ -828,6 +831,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             .clicked()
                     {
                         app.actions.push(Action::SaveSoloistKey);
+                    }
+                    if app.soloist_key_saved != Some(true)
+                        && theme::soft_button(
+                            ui,
+                            &palette,
+                            Some(Icon::ExternalLink),
+                            &gettext(locale, "Get a key"),
+                            false,
+                        )
+                        .clicked()
+                    {
+                        app.actions
+                            .push(Action::OpenUrl(SOLOIST_KEY_GUIDE_URL.into()));
                     }
                     let hint = if app.soloist_key_saved == Some(true) {
                         gettext(locale, "Replace the saved key")
