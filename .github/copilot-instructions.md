@@ -68,6 +68,15 @@ boundaries as blockers. In particular, flag alternate sources for Spotify
 audio, DRM circumvention, embedded browser engines, telemetry, and hosted
 Spotifast services.
 
+Two contribution rules are blockers too. Review evidence never goes into the
+repository: screenshots, captures, comparison pages, or recordings, such as a
+new folder under `docs/assets/` that no page uses, belong in the pull request
+description or comments. Dependencies come only from crates.io or from
+repositories under `https://github.com/crmne/`: flag any `git` dependency,
+`[patch]` entry, or `Cargo.lock` source that points at a contributor's fork or
+anywhere else, and call out every added or changed git source, even a `crmne`
+one, because it needs the maintainer's explicit approval.
+
 Start every review by stating `User-visible UI impact: none` or by listing the
 visible changes. Treat changes to navigation, control placement, menu grouping,
 the application shell, window chrome, panel sizing, responsive breakpoints,
@@ -79,8 +88,9 @@ from permission to assess code quality.
 
 Check that behavioural changes have focused tests and that user-visible
 settings, files, and network access are documented. For UI changes, ask for
-visual evidence when the pull request does not provide it. Do not spend review
-comments on formatting that rustfmt already enforces.
+visual evidence in the pull request description when it is missing, never as
+files committed to the repository. Do not spend review comments on formatting
+that rustfmt already enforces.
 
 CI passing is necessary but not proof that a change is correct. Give concrete,
 actionable findings tied to changed lines; avoid generic summaries and do not
