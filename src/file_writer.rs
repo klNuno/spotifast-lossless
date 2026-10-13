@@ -12,7 +12,13 @@
 //! contents go to the disk. [`FileWriter::flush`] waits, for a bounded
 //! time, until everything handed over is written: before the app exits and
 //! before the system suspends.
+//!
+//! Every durable write in Spotifast goes through [`write()`] or
+//! [`write_with`] here, which refuse the UI thread: a debug or test build
+//! panics, and a release build logs an error (and still writes, rather
+//! than lose what was saved).
 
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -22,6 +28,44 @@ pub use fastframe_file::Access;
 
 /// How long exit and suspend wait for pending writes.
 pub const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
+
+thread_local! {
+    static UI_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Marks the calling thread as the one that draws the window. Durable
+/// writes on it are refused from then on.
+pub fn mark_ui_thread() {
+    UI_THREAD.with(|ui| ui.set(true));
+}
+
+/// Replaces `path` with `contents` and waits for the disk. Never on the UI
+/// thread; it hands writes to a [`FileWriter`].
+pub fn write(path: &Path, contents: impl AsRef<[u8]>, access: Access) -> std::io::Result<()> {
+    write_with(path, access, |file| {
+        std::io::Write::write_all(file, contents.as_ref())
+    })
+}
+
+/// [`fastframe_file::write_with`], refused on the UI thread.
+pub fn write_with(
+    path: &Path,
+    access: Access,
+    fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if UI_THREAD.with(Cell::get) {
+        let message = format!(
+            "{} was written on the UI thread, which then waits for the disk; \
+             hand it to the file writer",
+            path.display()
+        );
+        if cfg!(debug_assertions) {
+            panic!("{message}");
+        }
+        log::error!("{message}");
+    }
+    fastframe_file::write_with(path, access, fill)
+}
 
 type WriteFn = dyn Fn(&Path, &[u8], Access) -> std::io::Result<()> + Send + Sync;
 type OnFailure = Box<dyn FnOnce() + Send>;
@@ -76,11 +120,7 @@ impl Default for FileWriter {
 
 impl FileWriter {
     pub fn new() -> Self {
-        Self::with_write(|path, contents, access| {
-            fastframe_file::write_with(path, access, |file| {
-                std::io::Write::write_all(file, contents)
-            })
-        })
+        Self::with_write(|path, contents, access| write(path, contents, access))
     }
 
     /// A writer that writes through `write`, for tests that need to hold a
@@ -292,6 +332,35 @@ mod tests {
         assert!(writer.flush(Duration::from_secs(10)));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
         assert!(crate::util::temporary_files(path.parent().unwrap()).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A durable write on the UI thread fails tests, so a save that would
+    /// freeze the window cannot come back unnoticed.
+    #[test]
+    #[should_panic(expected = "UI thread")]
+    fn the_ui_thread_cannot_wait_for_the_disk() {
+        mark_ui_thread();
+        let dir = std::env::temp_dir().join(format!(
+            "spotifast-file-writer-{:016x}",
+            rand::random::<u64>()
+        ));
+        let _ = write(&dir.join("settings.json"), "{}", Access::Default);
+    }
+
+    /// The UI thread hands its writes over instead, and they still land.
+    #[test]
+    fn the_ui_thread_writes_through_the_writer() {
+        mark_ui_thread();
+        let dir = std::env::temp_dir().join(format!(
+            "spotifast-file-writer-{:016x}",
+            rand::random::<u64>()
+        ));
+        let path = dir.join("settings.json");
+        let writer = FileWriter::new();
+        writer.write(&path, "{}", Access::Default);
+        assert!(writer.flush(Duration::from_secs(10)));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

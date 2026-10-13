@@ -606,7 +606,9 @@ impl Settings {
     /// its [`crate::file_writer::FileWriter`] instead.
     pub fn save(&self, path: &Path) {
         let Some(text) = self.encode() else { return };
-        if let Err(error) = fastframe_file::write(path, text) {
+        if let Err(error) =
+            crate::file_writer::write(path, text, crate::file_writer::Access::Default)
+        {
             log::warn!("unable to save settings to {}: {error}", path.display());
         }
     }
@@ -1588,7 +1590,9 @@ impl SessionState {
     /// its [`crate::file_writer::FileWriter`] instead.
     pub fn save(&self, path: &Path) {
         let Some(text) = self.encode() else { return };
-        if let Err(error) = fastframe_file::write(path, text) {
+        if let Err(error) =
+            crate::file_writer::write(path, text, crate::file_writer::Access::Default)
+        {
             log::warn!("unable to save session to {}: {error}", path.display());
         }
     }

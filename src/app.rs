@@ -14411,6 +14411,39 @@ mod tests {
         }
     }
 
+    /// Settings, session and history saved on the UI thread are handed to
+    /// the file writer: the thread never waits for the disk (which panics
+    /// in tests), and everything is on the disk after a flush.
+    #[test]
+    fn saving_from_the_ui_thread_never_waits_for_the_disk() {
+        let mut app = test_app("saves-off-the-ui-thread");
+        crate::file_writer::mark_ui_thread();
+        app.settings.theme = ThemeChoice::Light;
+        app.plays.record(
+            crate::api::models::Track {
+                uri: "spotify:track:a".into(),
+                ..Default::default()
+            },
+            jiff::Timestamp::now(),
+        );
+        app.save_state();
+        app.plays.save(&app.files, &app.dirs.history_file());
+        assert!(app.flush_files());
+        assert_eq!(
+            Settings::load(&app.dirs.settings_file()).theme,
+            ThemeChoice::Light
+        );
+        assert!(app.dirs.session_file().exists());
+        assert_eq!(
+            crate::history::History::load(&app.dirs.history_file())
+                .plays()
+                .len(),
+            1
+        );
+        app.backend.shutdown();
+        let _ = std::fs::remove_dir_all(app.dirs.config.parent().unwrap());
+    }
+
     /// The session remembers fullscreen lyrics and the mode they left, and a
     /// session file from before the field existed still loads.
     #[test]

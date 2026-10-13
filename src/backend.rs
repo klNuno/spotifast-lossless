@@ -5221,7 +5221,7 @@ fn write_cached_playlist_file(
 ) -> std::io::Result<()> {
     use std::io::Write;
 
-    fastframe_file::write_with(path, fastframe_file::Access::Default, |file| {
+    crate::file_writer::write_with(path, crate::file_writer::Access::Default, |file| {
         // Buffer small serializer writes without retaining the whole JSON file.
         let mut writer = std::io::BufWriter::new(file);
         serde_json::to_writer(&mut writer, cached).map_err(std::io::Error::other)?;
@@ -5619,9 +5619,9 @@ fn write_playlist_manifest(
     use std::io::Write;
 
     // The new manifest reaches the disk before it replaces the old one.
-    fastframe_file::write_with(
+    crate::file_writer::write_with(
         &playlist_manifest_path(path),
-        fastframe_file::Access::Default,
+        crate::file_writer::Access::Default,
         |file| {
             let mut writer = std::io::BufWriter::new(file);
             serde_json::to_writer(&mut writer, manifest).map_err(std::io::Error::other)?;

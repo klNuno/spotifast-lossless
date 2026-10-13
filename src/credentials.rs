@@ -381,7 +381,12 @@ impl Store {
         .map_err(|_| Error::Invalid)?;
         // It holds no secret, but it lives with the credentials, which only
         // their owner reads.
-        fastframe_file::write_private(&self.marker_path(slot), bytes).map_err(|_| Error::Filesystem)
+        crate::file_writer::write(
+            &self.marker_path(slot),
+            bytes,
+            crate::file_writer::Access::Private,
+        )
+        .map_err(|_| Error::Filesystem)
     }
 
     fn legacy_paths(&self, slot: Slot) -> Vec<PathBuf> {
