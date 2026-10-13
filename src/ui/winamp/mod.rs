@@ -1539,6 +1539,7 @@ mod tests {
         NowPlaying {
             local: true,
             device_name: None,
+            device_kind: None,
             uri: "spotify:track:x".into(),
             id: None,
             title: title.into(),
