@@ -30,8 +30,8 @@ everything else. Read the Soloist section of
   the player engine in `src/player.rs`, never as blocking work on the UI
   thread.
 - File writes that wait for the disk (anything through `fastframe_file`)
-  never run on the UI thread: encode there and hand the bytes to the file
-  writer in `src/file_writer.rs`, whose guard panics in debug builds.
+  never run on the UI thread: encode there and hand the bytes to the app's
+  `fastframe_file::Writer`. fastframe_file's guard panics in debug builds.
 - Keep platform integrations behind target-specific modules or `cfg` blocks.
   A fix for one platform must keep the other two targets compiling.
 - Settings and state files must remain readable, backward compatible, and

@@ -37,11 +37,9 @@ pub async fn read<T: DeserializeOwned>(path: &std::path::Path, account: &str) ->
 pub async fn write<T: Serialize>(path: &std::path::Path, cache: &Cache<T>) -> std::io::Result<()> {
     let bytes = serde_json::to_vec(cache).map_err(std::io::Error::other)?;
     let path = path.to_owned();
-    tokio::task::spawn_blocking(move || {
-        crate::file_writer::write(&path, bytes, crate::file_writer::Access::Default)
-    })
-    .await
-    .map_err(std::io::Error::other)?
+    tokio::task::spawn_blocking(move || fastframe_file::write(&path, bytes))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
 #[cfg(test)]

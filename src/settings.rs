@@ -607,12 +607,10 @@ impl Settings {
     }
 
     /// Writes the settings and waits for the disk. The app saves through
-    /// its [`crate::file_writer::FileWriter`] instead.
+    /// its [`fastframe_file::Writer`] instead.
     pub fn save(&self, path: &Path) {
         let Some(text) = self.encode() else { return };
-        if let Err(error) =
-            crate::file_writer::write(path, text, crate::file_writer::Access::Default)
-        {
+        if let Err(error) = fastframe_file::write(path, text) {
             log::warn!("unable to save settings to {}: {error}", path.display());
         }
     }
@@ -1617,12 +1615,10 @@ impl SessionState {
     }
 
     /// Writes the session and waits for the disk. The app saves through
-    /// its [`crate::file_writer::FileWriter`] instead.
+    /// its [`fastframe_file::Writer`] instead.
     pub fn save(&self, path: &Path) {
         let Some(text) = self.encode() else { return };
-        if let Err(error) =
-            crate::file_writer::write(path, text, crate::file_writer::Access::Default)
-        {
+        if let Err(error) = fastframe_file::write(path, text) {
             log::warn!("unable to save session to {}: {error}", path.display());
         }
     }

@@ -412,7 +412,7 @@ pub struct App {
     /// Local play history. See [`crate::history`].
     pub plays: crate::history::History,
     /// Writes settings, session and history off the UI thread.
-    files: crate::file_writer::FileWriter,
+    files: fastframe_file::Writer,
     /// Current track timing used to decide when a play counts.
     listening: Option<Listening>,
     pub recents: crate::model::CursorList<crate::api::models::PlayHistory>,
@@ -950,7 +950,7 @@ impl App {
             liked_recheck_at: None,
             home: HomeData::default(),
             plays,
-            files: crate::file_writer::FileWriter::new(),
+            files: fastframe_file::Writer::new(),
             listening: None,
             recents: crate::model::CursorList::default(),
             recents_view: Vec::new(),
@@ -3603,7 +3603,7 @@ impl App {
             self.files.write(
                 &self.dirs.settings_file(),
                 text,
-                crate::file_writer::Access::Default,
+                fastframe_file::Access::Default,
             );
         }
     }
@@ -11432,20 +11432,17 @@ impl App {
                 self.files.write(
                     &self.dirs.session_file(),
                     text,
-                    crate::file_writer::Access::Default,
+                    fastframe_file::Access::Default,
                 );
             }
         }
     }
 
     /// Waits, for a bounded time, until every handed-over file write is on
-    /// the disk. Exit and suspend call it; nothing else should.
+    /// the disk. Exit and suspend call it; nothing else should. A timeout
+    /// is logged.
     pub fn flush_files(&self) -> bool {
-        let flushed = self.files.flush(crate::file_writer::FLUSH_TIMEOUT);
-        if !flushed {
-            log::warn!("settings and history were still being written when time ran out");
-        }
-        flushed
+        self.files.flush(fastframe_file::FLUSH_TIMEOUT)
     }
 
     /// Final teardown at real quit.
@@ -14422,13 +14419,28 @@ mod tests {
         }
     }
 
+    /// A save that waits for the disk on the UI thread fails debug builds
+    /// and tests, so one that would freeze the window cannot come back
+    /// unnoticed. (A release build logs it and still writes.)
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "UI thread")]
+    fn a_save_that_waits_for_the_disk_is_refused_on_the_ui_thread() {
+        let dir = std::env::temp_dir().join(format!(
+            "spotifast-ui-thread-save-{:016x}",
+            rand::random::<u64>()
+        ));
+        fastframe_file::mark_ui_thread();
+        Settings::default().save(&dir.join("settings.json"));
+    }
+
     /// Settings, session and history saved on the UI thread are handed to
     /// the file writer: the thread never waits for the disk (which panics
     /// in tests), and everything is on the disk after a flush.
     #[test]
     fn saving_from_the_ui_thread_never_waits_for_the_disk() {
         let mut app = test_app("saves-off-the-ui-thread");
-        crate::file_writer::mark_ui_thread();
+        fastframe_file::mark_ui_thread();
         app.settings.theme = ThemeChoice::Light;
         app.plays.record(
             crate::api::models::Track {

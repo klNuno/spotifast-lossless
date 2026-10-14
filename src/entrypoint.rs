@@ -613,9 +613,6 @@ pub(crate) fn run() -> eframe::Result<()> {
             "Spotifast",
             options,
             Box::new(move |cc| {
-                // eframe builds the app on the thread that draws it, which
-                // must never wait for the disk.
-                spotifast::file_writer::mark_ui_thread();
                 if let Some(gl) = &cc.gl {
                     use eframe::glow::HasContext;
                     // eframe has made this window's GL context current

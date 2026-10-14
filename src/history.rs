@@ -68,7 +68,7 @@ impl History {
 
     /// Hands the history to `files` if it changed since the last save. A
     /// write that fails leaves it to be written by the next save.
-    pub fn save(&mut self, files: &crate::file_writer::FileWriter, path: &Path) {
+    pub fn save(&mut self, files: &fastframe_file::Writer, path: &Path) {
         let failed = self.failed.swap(false, Ordering::SeqCst);
         if !std::mem::take(&mut self.dirty) && !failed {
             return;
@@ -83,7 +83,7 @@ impl History {
                 // What someone listened to is theirs: on Unix the file is
                 // readable by its owner only, whatever the old one allowed.
                 let failed = self.failed.clone();
-                files.write_or(path, text, crate::file_writer::Access::Private, move || {
+                files.write_or(path, text, fastframe_file::Access::Private, move || {
                     failed.store(true, Ordering::SeqCst)
                 });
             }
@@ -201,7 +201,7 @@ pub fn merged(local: &[PlayHistory], remote: &[PlayHistory]) -> Vec<PlayHistory>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file_writer::FileWriter;
+    use fastframe_file::Writer;
     use std::time::Duration;
 
     fn play(uri: &str, at: &str) -> PlayHistory {
@@ -342,7 +342,7 @@ mod tests {
             std::env::temp_dir().join(format!("spotifast-history-{:016x}", rand::random::<u64>()));
         let path = dir.join("history.json");
         let at: jiff::Timestamp = "2026-09-01T09:00:00Z".parse().unwrap();
-        let files = FileWriter::new();
+        let files = Writer::new();
         let mut history = History::default();
         for uri in ["spotify:track:a", "spotify:track:b"] {
             history.record(
@@ -385,7 +385,7 @@ mod tests {
             },
             "2026-09-01T09:00:00Z".parse().unwrap(),
         );
-        let files = FileWriter::new();
+        let files = Writer::new();
         history.save(&files, &blocked.join("history.json"));
         assert!(files.flush(Duration::from_secs(10)));
         assert!(history.needs_save(), "the failed write is still to be done");
@@ -418,7 +418,7 @@ mod tests {
             },
             "2026-09-01T09:00:00Z".parse().unwrap(),
         );
-        let files = FileWriter::new();
+        let files = Writer::new();
         history.save(&files, &path);
         assert!(files.flush(Duration::from_secs(10)));
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
