@@ -307,8 +307,10 @@ winit = { git = "https://github.com/crmne/winit", rev = "ed7caa9023f10b397f5b6ec
 # projectm-sys 1.2.2 hardcodes the Visual Studio 17 2022 CMake generator,
 # which GitHub's windows-latest images no longer carry; the fork lets an
 # explicit CMAKE_GENERATOR win, and asks vcpkg for the target's architecture
-# so libprojectM links for Windows on ARM. Drop when upstream takes the change.
-projectm-sys = { git = "https://github.com/crmne/projectm-rs", rev = "1ef6df1c20247a3a5800c625e46262330f93bbd6" }
+# so libprojectM links for Windows on ARM. Its libprojectM comes from
+# crmne/projectm's spotifast branch, which adds a length check on HLSL
+# identifiers. Drop each when upstream releases it.
+projectm-sys = { git = "https://github.com/crmne/projectm-rs", rev = "93852ff7299e5a63ed1315437593fc70915c0863" }
 # hyper-proxy2's unreleased rustls 0.23 update plus our upstream provider
 # compatibility fix. Drop this fork when a release includes both changes.
 hyper-proxy2 = { git = "https://github.com/crmne/hyper-proxy2", rev = "efca4811371ddae81c06be168de54194938d70b1" }
@@ -320,13 +322,16 @@ hyper-proxy2 = { git = "https://github.com/crmne/hyper-proxy2", rev = "efca48113
 # inside the access-point timeout (#1800), ranged playlist reads (#1801), an
 # in-memory credential cache for platform storage (#1802), bounded socket
 # setup that races IPv6 and IPv4 (#1803), playback recovery after a session
-# disconnect (#1765), and a volume set while the device is inactive (#1770).
+# disconnect (#1765), a volume set while the device is inactive (#1770),
+# the dealer connection through the configured proxy (#1665), tokens and
+# credentials kept out of Debug output (#1806), and a bounded handshake
+# packet size (#1807).
 # Every librespot crate comes from the fork so one copy exists. Drop each
 # patch once upstream merges it.
-librespot-audio = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
-librespot-connect = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
-librespot-core = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
-librespot-metadata = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
-librespot-oauth = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
-librespot-playback = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
-librespot-protocol = { git = "https://github.com/crmne/librespot", rev = "4118319a671f13cb3d85c7a870048216e75ee86e" }
+librespot-audio = { git = "https://github.com/crmne/librespot", rev = "847125198bb251d1d4497f46bebbfa4868b7d5d7" }
+librespot-connect = { git = "https://github.com/crmne/librespot", rev = "847125198bb251d1d4497f46bebbfa4868b7d5d7" }
+librespot-core = { git = "https://github.com/crmne/librespot", rev = "847125198bb251d1d4497f46bebbfa4868b7d5d7" }
+librespot-metadata = { git = "https://github.com/crmne/librespot", rev = "847125198bb251d1d4497f46bebbfa4868b7d5d7" }
+librespot-oauth = { git = "https://github.com/crmne/librespot", rev = "847125198bb251d1d4497f46bebbfa4868b7d5d7" }
+librespot-playback = { git = "https://github.com/crmne/librespot", rev = "847125198bb251d1d4497f46bebbfa4868b7d5d7" }
+librespot-protocol = { git = "https://github.com/crmne/librespot", rev = "847125198bb251d1d4497f46bebbfa4868b7d5d7" }
