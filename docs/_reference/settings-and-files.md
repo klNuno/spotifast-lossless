@@ -59,6 +59,12 @@ KWallet to remember a new sign-in. Flatpak is allowed to talk to
 produces an error without blocking the interface. A new sign-in can still be
 used for this session, with no new plaintext fallback file.
 
+On Windows, grants are saved with Enterprise persistence, which survives a
+restart. Since 0.13.2, if Credential Manager refuses that, or keeps the grant
+only until you sign out of Windows, Spotifast saves it again with Local
+persistence, which also survives a restart. Failures are logged with their
+Windows error code, never with the grant.
+
 On upgrade, each legacy grant is written to the protected store and read back
 before its old file is removed. Valid grants migrate without signing in again.
 If Spotify rejects a saved refresh grant, only that grant is forgotten so the
