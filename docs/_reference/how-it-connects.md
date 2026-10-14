@@ -454,6 +454,15 @@ reconnection waits for one instead of retrying. Spotifast asks the system
 about the internet as a whole rather than about a Spotify host, so the check
 looks up no name and sends nothing over the network.
 
+Since 0.13.2, a playback connection that fails while the network is up, for
+example with a connection reset after the computer wakes, is tried again with
+the saved playback approval: after 5 and 15 seconds, 1, 2 and 5 minutes, and
+then every 10 minutes until it connects. These attempts keep the error on
+screen instead of flickering through "Connecting", and they stop when
+Spotify rejects the approval, playback is set up again, or you sign out.
+**Set up playback here** and **Try again** first reconnect with the saved
+approval; the browser opens only when there is none or Spotify rejects it.
+
 On macOS, local playback and track loading declare a user-initiated activity
 so App Nap does not throttle them when another application covers Spotifast.
 Pausing, stopping, an output error, or disconnecting releases the activity;
