@@ -55,7 +55,9 @@ Spotify" spinner, since nothing on screen waits for it.
 
 Web API sign-in opens the browser only after its local callback port is available. If
 port 8989 is occupied, the sign-in screen keeps the error visible. Close the
-app using that port, then choose **Try again**.
+app using that port, then choose **Try again**. Since 0.13.2, playback setup
+does the same with its port, 8898: if another app holds it, Settings shows the
+error, the browser stays closed, and a saved playback approval is kept.
 
 Artist pages read popular tracks over the verified account's local playback
 session when it is ready. The list uses that account's country, or Spotify's

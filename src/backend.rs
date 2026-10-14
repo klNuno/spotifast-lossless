@@ -3181,11 +3181,22 @@ impl Worker {
             )));
             return;
         }
+        let grant = crate::auth::Grant::playback();
+        // Reserve the callback port before touching the saved grant or
+        // opening the browser (#899, as #754 did for the Web API). A busy
+        // port must keep the saved grant and show the conflict, not send the
+        // approval to whichever app holds the port.
+        let listener = match crate::auth::listen_for_redirect(grant.redirect_port) {
+            Ok(listener) => listener,
+            Err(error) => {
+                self.emit(Event::Playback(LocalPlayback::Failed(error.to_string())));
+                return;
+            }
+        };
         self.credentials.invalidate(CredentialSlot::Playback);
         self.authorization_attempt += 1;
         let attempt = self.authorization_attempt;
         let lease = self.credentials.lease(CredentialSlot::Playback);
-        let grant = crate::auth::Grant::playback();
         let flow = crate::auth::begin(grant.clone());
         let (cancel_tx, cancel_rx) = watch::channel(false);
         self.cancel_signin = Some(cancel_tx);
@@ -3202,8 +3213,8 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let result = async {
-                let code =
-                    crate::auth::wait_for_code(grant.redirect_port, &flow.state, cancel_rx).await?;
+                let code = crate::auth::wait_for_code_on_listener(listener, &flow.state, cancel_rx)
+                    .await?;
                 crate::auth::exchange_code(&http, &grant, &code, &flow.verifier).await
             }
             .await;
@@ -7115,6 +7126,46 @@ mod authorization_tests {
             assert!(worker.authorizing_source.is_none());
             assert_eq!(worker.authorization_attempt, 0);
         }
+    }
+
+    /// A busy playback callback port reports the conflict and leaves the
+    /// saved playback grant alone, without opening the browser (#899).
+    #[test]
+    fn occupied_playback_port_keeps_the_saved_grant() {
+        let (runtime, mut worker, events) = worker("occupied-playback-port");
+        let _entered = runtime.enter();
+        verify(&mut worker, ApiSource::Shared, "alice");
+        let saved = worker.credentials.lease(CredentialSlot::Playback);
+        runtime
+            .block_on(saved.save(StoredGrant::Playback(Credentials::with_password(
+                "alice",
+                "dummy-saved-grant",
+            ))))
+            .unwrap();
+        let _ = events.try_iter().count();
+        let _occupied =
+            std::net::TcpListener::bind(("127.0.0.1", crate::auth::PLAYBACK_REDIRECT_PORT))
+                .unwrap();
+        let attempt = worker.authorization_attempt;
+
+        worker.authorize_playback();
+
+        let received: Vec<_> = events.try_iter().collect();
+        assert!(received.iter().any(|event| matches!(event,
+            Event::Playback(LocalPlayback::Failed(message)) if message.contains("8898")
+        )));
+        assert!(
+            !received
+                .iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Authorizing)))
+        );
+        assert!(worker.cancel_signin.is_none());
+        assert_eq!(worker.authorization_attempt, attempt);
+        assert!(saved.current(), "the saved grant was invalidated");
+        assert!(matches!(
+            runtime.block_on(saved.load()).unwrap().grant,
+            Some(StoredGrant::Playback(grant)) if grant.username.as_deref() == Some("alice")
+        ));
     }
 
     #[test]

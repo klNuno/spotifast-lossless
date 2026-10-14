@@ -156,18 +156,6 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
-/// Listens for Spotify's redirect and returns the authorization code.
-///
-/// Ends early when `cancel` flips to true (the user gave up) or after ten
-/// minutes.
-pub async fn wait_for_code(
-    port: u16,
-    expected_state: &str,
-    cancel: watch::Receiver<bool>,
-) -> Result<String> {
-    wait_for_code_on_listener(listen_for_redirect(port)?, expected_state, cancel).await
-}
-
 /// Reserve the callback port before offering or opening browser sign-in.
 pub fn listen_for_redirect(port: u16) -> Result<TcpListener> {
     let address: SocketAddr = ([127, 0, 0, 1], port).into();
@@ -178,6 +166,11 @@ pub fn listen_for_redirect(port: u16) -> Result<TcpListener> {
     Ok(TcpListener::from_std(listener)?)
 }
 
+/// Listens on a reserved port for Spotify's redirect and returns the
+/// authorization code.
+///
+/// Ends early when `cancel` flips to true (the user gave up) or after ten
+/// minutes.
 pub async fn wait_for_code_on_listener(
     listener: TcpListener,
     expected_state: &str,
