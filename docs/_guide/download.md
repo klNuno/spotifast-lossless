@@ -98,7 +98,7 @@ yay -S spotifast-git      # built from the latest commit
 ### Flatpak
 
 Download the [Spotifast Flatpak]({{ base }}/spotifast-v{{ v }}-x86_64.flatpak?flatpak-id=rocks.spotifast.Spotifast).
-It requires Flatpak and the Freedesktop 24.08 runtime, a set of shared
+It requires Flatpak and the Freedesktop 25.08 runtime, a set of shared
 components used by Flatpak apps:
 
 ```sh
