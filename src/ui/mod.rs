@@ -458,8 +458,11 @@ fn caption_buttons(ui: &mut egui::Ui, palette: &theme::Palette, locale: crate::i
         button: palette.surface_hover,
         header_height: theme::CUSTOM_TOP_BAR_HEIGHT,
     };
-    let [minimize, maximize, restore, close] =
-        ["Minimize", "Maximize", "Restore", "Close"].map(|label| gettext(locale, label));
+    // Literal calls, so xgettext extracts each label.
+    let minimize = gettext(locale, "Minimize");
+    let maximize = gettext(locale, "Maximize");
+    let restore = gettext(locale, "Restore");
+    let close = gettext(locale, "Close");
     let labels = fastframe_titlebar::Labels {
         minimize: &minimize,
         maximize: &maximize,
