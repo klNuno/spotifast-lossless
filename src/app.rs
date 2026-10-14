@@ -59,6 +59,8 @@ const PLAYLISTS_RETRY: Duration = Duration::from_secs(60);
 /// How long background work goes on before the top bar's spinner shows it,
 /// so fast answers never flash it.
 const BACKGROUND_QUIET: Duration = Duration::from_secs(1);
+/// How often coming back to the window reads the playlist tree again.
+const ROOTLIST_REFRESH: Duration = Duration::from_secs(5);
 /// How far into a song Previous restarts it rather than stepping back,
 /// matching what librespot does during playback.
 const RESTART_BEFORE_PREVIOUS: u32 = 3_000;
@@ -631,6 +633,13 @@ pub struct App {
     /// A session connected and its account's cache is still to be read,
     /// once `Me` says which account it is.
     account_caches_due: bool,
+    /// When the tree was last asked for.
+    rootlist_read_at: Option<Instant>,
+    /// Whether the window had focus last frame.
+    window_focused: bool,
+    /// Coming back to the window asked for the tree, and it has not been
+    /// read since.
+    rootlist_wanted: bool,
     /// Playlists the account may add songs to by Spotify's own word, by
     /// URI: the ones shared with it by invitation, which the Web API's
     /// collaborative flag does not show. Empty until the session answers.
@@ -1086,6 +1095,9 @@ impl App {
             rootlist_cache: session.rootlist.clone(),
             account_caches_generation: 0,
             account_caches_due: false,
+            rootlist_read_at: None,
+            window_focused: true,
+            rootlist_wanted: false,
             editable_by_grant: std::collections::BTreeSet::new(),
             pending_link: None,
             prerelease_request: None,
@@ -1185,6 +1197,8 @@ impl App {
         self.window_hidden = true;
         self.hide_intent = false;
         self.wants_show = false;
+        // Showing it again is coming back to it.
+        self.window_focused = false;
     }
 
     /// Whether closing the window keeps the app in the tray rather than
@@ -3146,6 +3160,17 @@ impl App {
 
     fn tick(&mut self, ctx: &egui::Context) {
         self.poll_custom_themes(ctx);
+        if let Some(wait) = self.window_focus(ctx.input(|input| {
+            // A minimised window is away even where it keeps focus.
+            let viewport = input.viewport();
+            if viewport.minimized == Some(true) {
+                Some(false)
+            } else {
+                viewport.focused
+            }
+        })) {
+            ctx.request_repaint_after(wait);
+        }
         let now = Instant::now();
         if self.winamp_level_reassert > 0 {
             self.winamp_level_reassert -= 1;
@@ -4095,6 +4120,51 @@ impl App {
     }
 
     // ---- loading ---------------------------------------------------------------
+
+    fn read_rootlist(&mut self) {
+        self.rootlist_wanted = false;
+        self.rootlist_read_at = Some(Instant::now());
+        self.backend.send(Command::Rootlist);
+    }
+
+    /// Spotify's own apps can reorder playlists and folders while Spotifast
+    /// waits behind them, so coming back reads the tree again. The read
+    /// goes over the playback session and spends no Web API quota. A return
+    /// soon after the last read waits out the rest of `ROOTLIST_REFRESH`,
+    /// and the time left is returned so the caller can wake up for it.
+    ///
+    /// `focused` is `None` on a frame that does not say, such as one run
+    /// without a window; that frame neither leaves nor comes back.
+    fn window_focus(&mut self, focused: Option<bool>) -> Option<Duration> {
+        // Frames without a window have no focus to report.
+        if self.window_hidden {
+            return None;
+        }
+        if let Some(focused) = focused {
+            if focused && !self.window_focused {
+                self.rootlist_wanted = true;
+            }
+            self.window_focused = focused;
+        }
+        // Until every playlist has arrived, the first read is still to come.
+        if !self.rootlist_wanted
+            || !self.is_connected()
+            || !matches!(self.library.playlists, Loadable::Loaded(_))
+            || self.library.playlists_next.is_some()
+            || self.library.playlists_asked.is_some()
+            || self.library.playlists_loading_since.is_some()
+        {
+            return None;
+        }
+        let wait = self.rootlist_read_at.map_or(Duration::ZERO, |at| {
+            ROOTLIST_REFRESH.saturating_sub(at.elapsed())
+        });
+        if wait.is_zero() {
+            self.read_rootlist();
+            return None;
+        }
+        Some(wait)
+    }
 
     /// Reads the playlists from the top. A list already shown stays until
     /// the new one is whole. A load already on its way is replaced, not
@@ -6164,7 +6234,7 @@ impl App {
                             .playlists_edits
                             .retain(|edit| edit.settled_by.is_none_or(|by| by > generation));
                         // Load folder order after all playlists arrive.
-                        self.backend.send(Command::Rootlist);
+                        self.read_rootlist();
                     }
                     if shown || next_offset.is_none() {
                         self.apply_playlist_edits();
@@ -26621,6 +26691,70 @@ mod tests {
         }
         app.assumed_context = None;
         assert_eq!(app.editable_context_playlist(), None, "no context");
+    }
+
+    /// Spotify's own apps reorder playlists while Spotifast is in the
+    /// background (#683); coming back reads the tree again, at most every
+    /// `ROOTLIST_REFRESH`, once every playlist has arrived.
+    #[test]
+    fn returning_to_the_window_reads_the_playlist_tree_again() {
+        let mut app = test_app("rootlist-focus");
+        app.auth = AuthStatus::Connected {
+            username: "listener".into(),
+        };
+        let reads = |app: &mut App, focused: bool| {
+            let before = app.rootlist_read_at;
+            let wait = app.window_focus(Some(focused));
+            (app.rootlist_read_at != before, wait)
+        };
+        app.window_focus(Some(false));
+        assert_eq!(reads(&mut app, true), (false, None), "playlists loading");
+        app.library.playlists = Loadable::Loaded(Vec::new());
+        app.library.playlists_next = Some(50);
+        assert_eq!(reads(&mut app, true), (false, None), "more to come");
+        app.load_more(Page::Home);
+        assert_eq!(app.library.playlists_asked, Some(50));
+        assert_eq!(reads(&mut app, true), (false, None), "page on its way");
+        app.library.playlists_asked = None;
+        // The first read clears the request.
+        app.read_rootlist();
+        assert_eq!(reads(&mut app, true), (false, None), "already read");
+
+        // Coming back soon after a read waits for the rest of the interval,
+        // then reads while the window stays focused.
+        app.window_focus(Some(false));
+        let (read, wait) = reads(&mut app, true);
+        assert!(!read);
+        assert!(wait.is_some_and(|wait| wait <= ROOTLIST_REFRESH));
+        app.rootlist_read_at = Some(Instant::now() - ROOTLIST_REFRESH);
+        assert_eq!(reads(&mut app, true), (true, None));
+        assert_eq!(reads(&mut app, true), (false, None), "staying focused");
+
+        // A frame that does not say whether it has focus, such as one run
+        // without a window, is no return.
+        app.rootlist_read_at = Some(Instant::now() - ROOTLIST_REFRESH);
+        app.window_focus(Some(false));
+        assert_eq!(app.window_focus(None), None);
+        assert!(!app.rootlist_wanted, "no word on focus");
+
+        // A return long after the last read reads at once.
+        app.rootlist_read_at = Some(Instant::now() - ROOTLIST_REFRESH);
+        app.window_focus(Some(false));
+        assert_eq!(reads(&mut app, true), (true, None));
+
+        // Closing to the tray and showing the window again is a return,
+        // even when it had focus as it closed; hidden frames read nothing.
+        app.rootlist_read_at = Some(Instant::now() - ROOTLIST_REFRESH);
+        app.window_gone();
+        assert_eq!(reads(&mut app, true), (false, None), "hidden");
+        app.window_hidden = false;
+        assert_eq!(reads(&mut app, true), (true, None), "shown again");
+
+        app.auth = AuthStatus::SignedOut;
+        app.rootlist_read_at = Some(Instant::now() - ROOTLIST_REFRESH);
+        app.window_focus(Some(false));
+        assert_eq!(reads(&mut app, true), (false, None), "signed out");
+        app.backend.shutdown();
     }
 
     /// Folder order survives a restart, but only for the account that
