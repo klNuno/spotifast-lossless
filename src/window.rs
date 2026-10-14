@@ -88,52 +88,6 @@ pub fn report_missing_opengl(locale: crate::i18n::Locale) {
     }
 }
 
-/// Handles a macOS title-bar double-click, or leaves a first click to drag.
-#[cfg(target_os = "macos")]
-pub fn macos_titlebar_should_drag() -> bool {
-    use fastframe_macos::DoubleClick;
-    use objc2::{MainThreadMarker, sel};
-    use objc2_app_kit::{NSApplication, NSEventType};
-    use objc2_foundation::NSObjectNSDelayedPerforming;
-
-    let Some(mtm) = MainThreadMarker::new() else {
-        return true;
-    };
-    let app = NSApplication::sharedApplication(mtm);
-    let Some(event) = app.currentEvent() else {
-        return true;
-    };
-    if event.r#type() != NSEventType::LeftMouseDown || event.clickCount() != 2 {
-        return true;
-    }
-
-    if let Some(window) = event.window(mtm) {
-        // Let egui finish this frame before AppKit starts resizing the window.
-        // SAFETY: Both NSWindow selectors take one optional sender argument.
-        unsafe {
-            match fastframe_macos::double_click_action() {
-                // AppKit already fills the screen as part of the native
-                // window drag.
-                DoubleClick::Fill | DoubleClick::Nothing => {}
-                DoubleClick::Minimize => window.performSelector_withObject_afterDelay(
-                    sel!(performMiniaturize:),
-                    None,
-                    0.0,
-                ),
-                DoubleClick::Zoom => {
-                    window.performSelector_withObject_afterDelay(sel!(performZoom:), None, 0.0)
-                }
-            }
-        }
-    }
-    false
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn macos_titlebar_should_drag() -> bool {
-    true
-}
-
 /// Minimize the active window without leaving egui's macOS viewport flag stale
 /// when the user later restores it from the Dock.
 pub fn minimize_window(ctx: &egui::Context) {

@@ -346,7 +346,11 @@ pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
     let fullscreen = ui
         .ctx()
         .input(|input| input.viewport().fullscreen.unwrap_or(false));
-    if fullscreen || !(cfg!(target_os = "macos") || crate::window::custom_titlebar()) {
+    if cfg!(target_os = "macos") {
+        fastframe_titlebar::drag(ui, rect);
+        return;
+    }
+    if fullscreen || !crate::window::custom_titlebar() {
         return;
     }
     let response = ui.interact(
@@ -360,12 +364,7 @@ pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
             .input(|input| input.viewport().maximized.unwrap_or(false));
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-    } else if (crate::window::custom_titlebar() && response.drag_started())
-        || (cfg!(target_os = "macos")
-            && response.is_pointer_button_down_on()
-            && ui.input(|input| input.pointer.primary_pressed())
-            && crate::window::macos_titlebar_should_drag())
-    {
+    } else if crate::window::custom_titlebar() && response.drag_started() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
 }
