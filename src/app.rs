@@ -14438,6 +14438,7 @@ mod tests {
             jiff::Timestamp::now(),
         );
         app.save_state();
+        app.flush_files();
         app.plays.save(&app.files, &app.dirs.history_file());
         assert!(app.flush_files());
         assert_eq!(
@@ -14572,6 +14573,7 @@ mod tests {
         app.on_now_playing_changed();
         assert_eq!(app.resume_position_ms, 19_566);
         app.save_session();
+        app.flush_files();
         assert_eq!(
             app.resume_position_ms, 19_566,
             "closing again must not lose the position"
@@ -19162,6 +19164,7 @@ mod tests {
             &["spotify:track:b", "spotify:track:ctx1"],
         );
         app.save_session();
+        app.flush_files();
 
         let options = AppOptions {
             media_controls: false,
@@ -25077,6 +25080,7 @@ mod tests {
             app.settings.proxy_config().unwrap(),
             Ok(false),
         );
+        app.flush_files();
         assert_eq!(std::fs::read(app.dirs.settings_file()).unwrap(), original);
         // An unlocked native store can finish the launch-time migration while
         // this test runs, in which case deleting the plaintext file is right.
@@ -26613,6 +26617,7 @@ mod tests {
         }]);
         assert!(app.session_dirty);
         app.save_session();
+        app.flush_files();
         drop(app);
 
         let mut restored = App::new(

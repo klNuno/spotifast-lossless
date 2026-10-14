@@ -337,6 +337,7 @@ mod tests {
 
     /// A durable write on the UI thread fails tests, so a save that would
     /// freeze the window cannot come back unnoticed.
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "UI thread")]
     fn the_ui_thread_cannot_wait_for_the_disk() {
@@ -346,6 +347,22 @@ mod tests {
             rand::random::<u64>()
         ));
         let _ = write(&dir.join("settings.json"), "{}", Access::Default);
+    }
+
+    /// A release build logs the mistake but still writes, rather than
+    /// lose what was saved.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn a_release_build_still_writes_on_the_ui_thread() {
+        mark_ui_thread();
+        let dir = std::env::temp_dir().join(format!(
+            "spotifast-file-writer-{:016x}",
+            rand::random::<u64>()
+        ));
+        let path = dir.join("settings.json");
+        write(&path, "{}", Access::Default).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// The UI thread hands its writes over instead, and they still land.
