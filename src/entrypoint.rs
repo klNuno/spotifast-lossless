@@ -586,7 +586,7 @@ pub(crate) fn run() -> eframe::Result<()> {
         let creator_shot = shot.clone();
         let mini = lease.peek(MiniWindow::wanted);
         let geometry = lease.peek(main_geometry);
-        #[cfg(all(windows, target_arch = "aarch64"))]
+        #[cfg(windows)]
         let locale = lease.peek(|app| app.locale);
         #[cfg(feature = "demo")]
         let options = {
