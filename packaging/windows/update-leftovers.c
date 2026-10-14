@@ -110,7 +110,7 @@ static void remove_tree(MSIHANDLE install, const wchar_t *path, DWORD attributes
     }
     if (!is_link(attributes) && depth < 64) {
         wchar_t *pattern = join(path, L"*");
-        WIN32_FIND_DATAW entry;
+        WIN32_FIND_DATAW entry = {0};
         HANDLE find = pattern ? FindFirstFileExW(pattern, FindExInfoBasic, &entry,
                                                  FindExSearchNameMatch, NULL, 0)
                               : INVALID_HANDLE_VALUE;
@@ -164,7 +164,7 @@ __declspec(dllexport) UINT __stdcall RemoveUpdateLeftovers(MSIHANDLE install)
         return ERROR_SUCCESS;
     }
     wchar_t *pattern = join(folder, PREFIX L"*");
-    WIN32_FIND_DATAW entry;
+    WIN32_FIND_DATAW entry = {0};
     HANDLE find = pattern ? FindFirstFileExW(pattern, FindExInfoBasic, &entry,
                                              FindExSearchNameMatch, NULL, 0)
                           : INVALID_HANDLE_VALUE;
