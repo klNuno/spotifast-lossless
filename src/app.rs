@@ -44,6 +44,11 @@ const REMOTE_POLL_UNSEEN: Duration = Duration::from_secs(30);
 const REMOTE_FRESH: Duration = Duration::from_secs(60);
 const DEVICES_FRESH: Duration = Duration::from_secs(12);
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(280);
+/// How long a suspend or the end of the session waits for pending file
+/// writes. fastframe-power holds the system back for 1.5 s before a
+/// suspend (3 s at the end of a session), so a longer wait would only
+/// answer after the system has gone ahead without us.
+const SUSPEND_FLUSH_TIMEOUT: Duration = Duration::from_millis(1500);
 /// How old the saved resume point may grow while music plays.
 const SESSION_REFRESH: Duration = Duration::from_secs(30);
 /// The longest the app sleeps in the tray with nothing due.
@@ -11051,8 +11056,9 @@ impl App {
                     self.save_state();
                     self.plays.save(&self.files, &self.dirs.history_file());
                     // The system may stop for good after this: the writes
-                    // reach the disk before it is told to go ahead.
-                    self.flush_files();
+                    // reach the disk before it is told to go ahead, within
+                    // the time the system is held for.
+                    self.files.flush(SUSPEND_FLUSH_TIMEOUT);
                     ack.done();
                 }
                 Event::Resumed => {}
@@ -11439,8 +11445,7 @@ impl App {
     }
 
     /// Waits, for a bounded time, until every handed-over file write is on
-    /// the disk. Exit and suspend call it; nothing else should. A timeout
-    /// is logged.
+    /// the disk. Exit calls it; nothing else should. A timeout is logged.
     pub fn flush_files(&self) -> bool {
         self.files.flush(fastframe_file::FLUSH_TIMEOUT)
     }
