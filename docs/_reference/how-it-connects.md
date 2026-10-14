@@ -414,8 +414,9 @@ refuse the first attempt, so Spotifast tries once more. A device that does
 not answer within 20 seconds is reported as not answering.
 
 A Cast device presents a TLS certificate of its own, which system trust stores
-do not hold, so the connection accepts any certificate. Before sending anything
-else, Spotifast asks the device to prove it is genuine, as Chrome does. It
+do not hold, so the connection accepts any certificate. Since 0.13.1, before
+sending anything else, Spotifast asks the device to prove it is genuine, as
+Chrome does. It
 sends a random challenge on Cast's `deviceauth` channel. The device signs the
 challenge and the certificate of this connection with its device key, and
 sends that key's certificate chain. Spotifast checks that the chain leads to
@@ -427,7 +428,9 @@ Chrome requires. If any check fails, Spotifast stops. It does not start
 Spotify on the device or ask for a token, and it reports that the device could
 not prove it is genuine. As in Chrome, older devices that sign with SHA-1 are
 accepted, and the revocation list a device may send with its answer is not
-checked (Chrome only checks it when told to require one).
+checked (Chrome only checks it when told to require one). Spotifast 0.13.0
+made no such check: whatever answered at the address of the selected device
+received the token.
 
 The token is issued for the Spotify client and device ID that the receiver
 names in its `getInfo` reply, not the reusable playback credential. Spotifast
