@@ -18,9 +18,11 @@
 //!   formats on first use.
 //!
 //! Spotifast reaches Soloist's WebSocket API and pairing endpoint through
-//! QEMU's port forwarding on loopback, and the shim sends the audio to
-//! [`HOST`], which QEMU connects to Spotifast's port on loopback. The client
-//! key goes over the machine's console and is never written to disk.
+//! QEMU's port forwarding on loopback. The shim writes the audio to a
+//! virtio-serial port, [`PCM_DEVICE`], which QEMU connects to Spotifast's
+//! port on loopback: half the cost of the same audio through the machine's
+//! network, which splits it into packets. The client key goes over the
+//! machine's console and is never written to disk.
 
 use std::fs::{self, OpenOptions};
 use std::io;
@@ -37,8 +39,9 @@ use super::{Prepared, ext2, install};
 
 /// The machine's address on QEMU's user network.
 const GUEST: &str = "10.0.2.15";
-/// The address QEMU answers for Windows' loopback.
-const HOST: &str = "10.0.2.2";
+/// The audio's port inside the machine: port 1 of its only virtio-serial
+/// device, whose port 0 is the console.
+const PCM_DEVICE: &str = "/dev/vport0p1";
 /// Soloist's WebSocket API and pairing endpoint inside the machine. The
 /// shim pins the pairing endpoint's port (`PULSE_SHIM_LISTEN`).
 const CONTROL_PORT: u16 = 4070;
@@ -175,7 +178,7 @@ impl Machine {
             &format!("{GUEST}:{CONTROL_PORT}"),
         );
         let env = [
-            ("PULSE_SHIM_OUT", format!("tcp:{HOST}:{}", args.pcm_port)),
+            ("PULSE_SHIM_OUT", format!("dev:{PCM_DEVICE}")),
             ("PULSE_SHIM_LISTEN", format!("{GUEST}:{PAIRING_PORT}")),
             ("PULSE_SHIM_HIDE", "-k".into()),
             ("PULSE_SHIM_CHUNK_MS", SHIM_CHUNK_MS.to_string()),
@@ -231,8 +234,18 @@ impl Machine {
             "virtio-serial-pci",
             "-device",
             "virtconsole,chardev=console",
-            "-netdev",
+            "-device",
+            "virtserialport,chardev=pcm,name=pcm,nr=1",
+            "-chardev",
         ]);
+        // Spotifast listens before QEMU starts and until it ends. No
+        // `reconnect-ms`: QEMU 11.1 on Windows aborts when an attempt to
+        // connect again is refused.
+        command.arg(format!(
+            "socket,id=pcm,host=127.0.0.1,port={}",
+            args.pcm_port
+        ));
+        command.arg("-netdev");
         command.arg(format!(
             "user,id=net,hostfwd=tcp:127.0.0.1:{}-{GUEST}:{CONTROL_PORT},hostfwd=tcp:127.0.0.1:{}-{GUEST}:{PAIRING_PORT}",
             forwarded.control, forwarded.pairing

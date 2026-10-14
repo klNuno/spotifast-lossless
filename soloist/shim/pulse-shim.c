@@ -10,6 +10,8 @@
  * Environment:
  *   PULSE_SHIM_OUT=tcp:HOST:PORT  the receiver; anything else plays nowhere
  *                                 at real time (for tests)
+ *   PULSE_SHIM_OUT=dev:PATH       a virtio-serial port its host carries to
+ *                                 the receiver, used by one stream at a time
  *   PULSE_SHIM_LOG=PATH           appends diagnostics and PCM statistics
  *   PULSE_SHIM_LIFELINE=1         stdin is a pipe nobody writes to: when it
  *                                 closes, the parent is gone and so is Soloist
@@ -25,15 +27,23 @@
  * Wire format, little endian. Every message is a type byte, a u32 payload
  * length, then the payload.
  *   shim to receiver:
- *     1 FORMAT  u32 pa_sample_format, u32 rate, u32 channels
+ *     1 FORMAT  u32 pa_sample_format, u32 rate, u32 channels, u32 stream id
  *     2 PCM     interleaved samples in that format
  *     3 FLUSH   drop everything queued (seek, skip)
  *     4 CORK    u8: 1 paused, 0 playing
  *     5 VOLUME  u32 average pa_volume_t, 65536 is 100 %
+ *     7 CLOSE   the stream ended; on a port, the next stream follows
  *   receiver to shim:
- *     6 ACK     u64 PCM bytes the receiver has taken since it connected,
- *               u32 audio the receiver still holds, in microseconds; a
- *               receiver that paces sends one as soon as it reads FORMAT
+ *     6 ACK     u64 PCM bytes the receiver has taken since FORMAT, u32
+ *               audio the receiver still holds, in microseconds, u32 the
+ *               stream id; a receiver that paces sends one as soon as it
+ *               reads FORMAT
+ *
+ * A port carries every stream over one connection, so a message is never
+ * cut short there, and the id tells a stream's acknowledgements from those
+ * an earlier stream left in the port. A stream that finds the port busy, or
+ * the receiver away, keeps its audio, and so Soloist's buffer, until both
+ * are back.
  *
  * Flow: the ring Soloist writes into is the device buffer. A receiver that
  * acknowledges sets the pace: the shim keeps at most WINDOW_MS of audio, or
@@ -65,7 +75,7 @@
 
 #define EXPORT __attribute__((visibility("default")))
 
-enum { MSG_FORMAT = 1, MSG_PCM = 2, MSG_FLUSH = 3, MSG_CORK = 4, MSG_VOLUME = 5, MSG_ACK = 6 };
+enum { MSG_FORMAT = 1, MSG_PCM = 2, MSG_FLUSH = 3, MSG_CORK = 4, MSG_VOLUME = 5, MSG_ACK = 6, MSG_CLOSE = 7 };
 
 #define CHUNK_MS 10          /* PCM per message, unless PULSE_SHIM_CHUNK_MS */
 #define WINDOW_MS 100        /* unacknowledged audio a receiver may hold */
@@ -389,8 +399,10 @@ struct link {
     int fd; /* -1 when not connected */
     char host[256];
     char port[16];
-    int is_tcp;
+    char path[128];
+    int is_tcp, is_dev;
     double next_retry;
+    uint32_t id;         /* this connection's stream id */
     /* Flow control, counted since this connection opened. */
     int acks;            /* the receiver acknowledges */
     uint64_t sent, acked;
@@ -400,14 +412,24 @@ struct link {
     const int *run;      /* the stream's sender_run: a stalled send gives up when it clears */
 };
 
-static int send_all(int fd, const void *buf, size_t n, const int *run) {
+static int send_all(struct link *l, const void *buf, size_t n) {
     const uint8_t *p = buf;
     while (n) {
-        ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
+        ssize_t w = l->is_dev ? write(l->fd, p, n) : send(l->fd, p, n, MSG_NOSIGNAL);
         if (w < 0) {
             if (errno == EINTR) continue;
+            if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+            if (l->is_dev) {
+                /* The port is full: wait for room, unless its host went away. */
+                struct pollfd pf = {.fd = l->fd, .events = POLLOUT};
+                if (poll(&pf, 1, 100) > 0 && (pf.revents & (POLLHUP | POLLERR))) {
+                    errno = EPIPE;
+                    return -1;
+                }
+                continue;
+            }
             /* SO_SNDTIMEO expired: the receiver is stalled; keep waiting unless the stream stopped. */
-            if ((errno == EAGAIN || errno == EWOULDBLOCK) && (!run || __atomic_load_n(run, __ATOMIC_ACQUIRE))) continue;
+            if (!l->run || __atomic_load_n(l->run, __ATOMIC_ACQUIRE)) continue;
             return -1;
         }
         p += w;
@@ -421,22 +443,32 @@ static void link_close(struct link *l, const char *why) {
     slog("link: closed (%s)", why);
     close(l->fd);
     l->fd = -1;
+    /* A port's host that went away is not back within 20 ms. */
+    if (l->is_dev) l->next_retry = mono_now() + 0.5;
 }
 
 static int link_send(struct link *l, uint8_t type, const void *payload, uint32_t len) {
     if (l->fd < 0) return -1;
     uint8_t head[5] = {type, (uint8_t)len, (uint8_t)(len >> 8), (uint8_t)(len >> 16), (uint8_t)(len >> 24)};
-    if (send_all(l->fd, head, 5, l->run) < 0 || (len && send_all(l->fd, payload, len, l->run) < 0)) {
+    if (send_all(l, head, 5) < 0 || (len && send_all(l, payload, len) < 0)) {
         link_close(l, strerror(errno));
         return -1;
     }
     return 0;
 }
 
+/* The receiver plays out what it holds; on a port, the next stream may follow. */
+static void link_end(struct link *l) {
+    link_send(l, MSG_CLOSE, NULL, 0);
+    link_close(l, "stream ended");
+}
+
 /* Reads whatever acknowledgements have arrived, without waiting. */
 static void link_read_acks(struct link *l) {
     while (l->fd >= 0) {
-        ssize_t r = recv(l->fd, l->in + l->in_len, sizeof l->in - l->in_len, MSG_DONTWAIT);
+        /* A port reads 0 while its host has no receiver connected. */
+        ssize_t r = l->is_dev ? read(l->fd, l->in + l->in_len, sizeof l->in - l->in_len)
+                              : recv(l->fd, l->in + l->in_len, sizeof l->in - l->in_len, MSG_DONTWAIT);
         if (r == 0) {
             link_close(l, "receiver closed");
             return;
@@ -451,50 +483,70 @@ static void link_read_acks(struct link *l) {
         while (l->in_len - at >= 5) {
             uint8_t *m = l->in + at;
             uint32_t len = m[1] | m[2] << 8 | m[3] << 16 | (uint32_t)m[4] << 24;
-            if (m[0] != MSG_ACK || len != 12) {
+            if (m[0] != MSG_ACK || len != 16) {
+                /* A port may start mid-message where an earlier stream let it
+                   go with part of an acknowledgement unread: skip to the next. */
+                if (l->is_dev) {
+                    at++;
+                    continue;
+                }
                 link_close(l, "unexpected message from the receiver");
                 return;
             }
             if (l->in_len - at < 5 + len) break;
             uint64_t acked = 0;
-            uint32_t held = 0;
+            uint32_t held = 0, id = 0;
             memcpy(&acked, m + 5, 8);
             memcpy(&held, m + 13, 4);
+            memcpy(&id, m + 17, 4);
+            at += 5 + len;
+            if (id != l->id) continue; /* an earlier stream's */
             l->acked = acked;
             l->held_us = held;
             if (!l->acks) slog("link: receiver acknowledges");
             l->acks = 1;
-            at += 5 + len;
         }
         memmove(l->in, l->in + at, l->in_len - at);
         l->in_len -= at;
     }
 }
 
-static void link_try_connect(struct link *l, const pa_sample_spec *ss) {
-    if (!l->is_tcp || l->fd >= 0 || mono_now() < l->next_retry) return;
-    l->next_retry = mono_now() + 0.5;
+static int tcp_connect(const char *host, const char *port) {
     struct addrinfo hints = {0}, *res = NULL;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(l->host, l->port, &hints, &res) != 0 || !res) return;
+    if (getaddrinfo(host, port, &hints, &res) != 0 || !res) return -1;
     int fd = socket(res->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd >= 0 && connect(fd, res->ai_addr, res->ai_addrlen) == 0) {
+    if (fd >= 0 && connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(res);
+    if (fd >= 0) {
         int one = 1;
         struct timeval tick = {0, 100000};
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tick, sizeof tick);
-        l->fd = fd;
-        l->acks = 0;
-        l->sent = l->acked = 0;
-        l->held_us = 0;
-        l->in_len = 0;
-        uint32_t fmt[3] = {(uint32_t)ss->format, ss->rate, ss->channels};
-        link_send(l, MSG_FORMAT, fmt, sizeof fmt);
-        slog("link: connected to %s:%s", l->host, l->port);
-    } else if (fd >= 0) {
-        close(fd);
     }
-    freeaddrinfo(res);
+    return fd;
+}
+
+static uint32_t g_link_count;
+
+static void link_try_connect(struct link *l, const pa_sample_spec *ss) {
+    if ((!l->is_tcp && !l->is_dev) || l->fd >= 0 || mono_now() < l->next_retry) return;
+    /* A port frees as soon as the stream before lets it go. */
+    l->next_retry = mono_now() + (l->is_dev ? 0.02 : 0.5);
+    int fd = l->is_dev ? open(l->path, O_RDWR | O_NONBLOCK | O_CLOEXEC) : tcp_connect(l->host, l->port);
+    if (fd < 0) return;
+    l->fd = fd;
+    l->id = ((uint32_t)getpid() << 16) ^ __atomic_add_fetch(&g_link_count, 1, __ATOMIC_RELAXED);
+    l->acks = 0;
+    l->sent = l->acked = 0;
+    l->held_us = 0;
+    l->in_len = 0;
+    uint32_t fmt[4] = {(uint32_t)ss->format, ss->rate, ss->channels, l->id};
+    if (link_send(l, MSG_FORMAT, fmt, sizeof fmt) == 0)
+        slog("link: connected to %s%s%s", l->is_dev ? l->path : l->host, l->is_dev ? "" : ":", l->is_dev ? "" : l->port);
 }
 
 /* ---------- PCM statistics, only while logging; never stores audio ---------- */
@@ -823,6 +875,15 @@ static void *sender_thread(void *arg) {
         }
         if (started) post_stream_event(s, 0);
         if (!held || corked) continue;
+        if (s->link.is_dev && s->link.fd < 0) {
+            /* Keep the block until the port and its receiver are back. */
+            struct pollfd p = {.fd = s->wake[0], .events = POLLIN};
+            if (poll(&p, 1, 20) > 0) {
+                char drain[64];
+                while (read(s->wake[0], drain, sizeof drain) > 0) {}
+            }
+            continue;
+        }
 
         if (await_window(s, held, window)) continue;
         int acked_flow = s->link.fd >= 0 && s->link.acks;
@@ -852,7 +913,7 @@ static void *sender_thread(void *arg) {
         }
     }
     if (log) stats_report(&s->stats, "end");
-    link_close(&s->link, "stream ended");
+    link_end(&s->link);
     free(buf);
     return NULL;
 }
@@ -886,6 +947,9 @@ EXPORT int pa_stream_connect_playback(pa_stream *s, const char *dev, const pa_bu
             snprintf(s->link.port, sizeof s->link.port, "%s", colon + 1);
             s->link.is_tcp = 1;
         }
+    } else if (out && strncmp(out, "dev:", 4) == 0) {
+        snprintf(s->link.path, sizeof s->link.path, "%s", out + 4);
+        s->link.is_dev = 1;
     }
     __atomic_store_n(&s->sender_run, 1, __ATOMIC_RELEASE);
     __atomic_add_fetch(&s->refs, 1, __ATOMIC_RELAXED); /* the sender's reference, dropped in disconnect */

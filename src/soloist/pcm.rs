@@ -15,6 +15,13 @@
 //! each block is 100 ms. A reader thread takes messages as they arrive, so a
 //! flush drops the blocks still in flight at once instead of after they
 //! played, and a cork pauses the output while the blocks behind it wait.
+//!
+//! Over TCP the shim opens a connection per stream. From the Windows
+//! virtual machine it writes to a virtio-serial port instead, which QEMU
+//! carries to this listener over one connection for the machine's whole
+//! life: a CLOSE message ends each stream there, and the id each FORMAT
+//! carries comes back in the acknowledgements, so a new stream never takes
+//! an older one's.
 
 use std::collections::VecDeque;
 use std::io::{self, BufReader, Read, Write};
@@ -38,6 +45,7 @@ const MSG_FLUSH: u8 = 3;
 const MSG_CORK: u8 = 4;
 const MSG_VOLUME: u8 = 5;
 const MSG_ACK: u8 = 6;
+const MSG_CLOSE: u8 = 7;
 
 /// libpulse's sample formats the shim can report.
 const PA_SAMPLE_S16LE: u32 = 3;
@@ -143,15 +151,14 @@ fn accept_loop(
             *current.lock().unwrap_or_else(PoisonError::into_inner) = Some(clone);
         }
         match serve(stream, &mut output, &hooks) {
-            Ok(()) => log::debug!("soloist audio: stream closed"),
+            Ok(()) => log::debug!("soloist audio: connection closed"),
             Err(error) => log::warn!("soloist audio: {error}"),
         }
         current
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        // A gap until the shim reconnects; the output must not hang on to
-        // the old stream's tail.
+        // A gap until the shim reconnects.
         output.stop();
     }
     output.stop();
@@ -248,6 +255,14 @@ impl Format {
     }
 }
 
+/// The id the shim gave the stream, echoed in every acknowledgement; 0 when
+/// the format message carries none.
+fn stream_id(format: &[u8]) -> u32 {
+    format.get(12..16).map_or(0, |bytes| {
+        u32::from_le_bytes(bytes.try_into().expect("four bytes"))
+    })
+}
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.to_string())
 }
@@ -276,8 +291,8 @@ struct Inbox {
     corks: VecDeque<bool>,
     /// A flush came after the player's last block.
     flushed: bool,
-    /// The connection ended, cleanly or not.
-    end: Option<io::Result<()>>,
+    /// The stream ended, cleanly or not.
+    ended: bool,
 }
 
 struct Shared {
@@ -297,13 +312,16 @@ impl Shared {
         acks.taken += bytes;
         // Nothing is held before the first audio.
         let (taken, held_us) = (acks.taken, if acks.taken == 0 { 0 } else { acks.held_us });
-        send_ack(&mut acks.stream, taken, held_us)
+        let id = acks.id;
+        send_ack(&mut acks.stream, taken, held_us, id)
     }
 }
 
 struct Acks {
     stream: TcpStream,
-    /// PCM bytes played or dropped since the connection opened.
+    /// The stream's id, from its format message.
+    id: u32,
+    /// PCM bytes played or dropped since the stream began.
     taken: u64,
     held_us: u32,
 }
@@ -312,102 +330,210 @@ enum Next {
     Flush,
     Cork(bool),
     Block(Format, Vec<u8>),
-    End(io::Result<()>),
+    End,
 }
 
+/// How a stream ended.
+enum End {
+    /// The connection closed.
+    Eof,
+    /// The shim closed the stream; another may follow on the connection.
+    Closed,
+    /// Another stream began without a close, with this format message.
+    Next(Vec<u8>),
+}
+
+/// Plays the streams that arrive on one connection, one after the other.
 fn serve(stream: TcpStream, output: &mut Output, hooks: &Hooks) -> io::Result<()> {
     stream.set_nodelay(true)?;
+    let mut reader = BufReader::with_capacity(64 * 1024, stream.try_clone()?);
+    let mut first = None;
+    loop {
+        let end = serve_stream(&stream, &mut reader, first.take(), output, hooks)?;
+        // The output must not hang on to the old stream's tail.
+        output.stop();
+        match end {
+            End::Eof => return Ok(()),
+            End::Closed => {}
+            End::Next(format) => first = Some(format),
+        }
+    }
+}
+
+/// Plays one stream, starting with `first` when its format message was
+/// already read.
+fn serve_stream(
+    stream: &TcpStream,
+    reader: &mut BufReader<TcpStream>,
+    first: Option<Vec<u8>>,
+    output: &mut Output,
+    hooks: &Hooks,
+) -> io::Result<End> {
     let shared = Shared {
         inbox: Mutex::default(),
         changed: Condvar::new(),
         acks: Mutex::new(Acks {
             stream: stream.try_clone()?,
+            id: 0,
             taken: 0,
             held_us: hooks.held_ms.saturating_mul(1000),
         }),
     };
-    let closer = stream.try_clone()?;
     thread::scope(|scope| {
-        scope.spawn(|| {
-            let result = read_messages(stream, &shared, hooks);
-            shared.inbox().end = Some(result);
+        let reading = scope.spawn(|| {
+            let result = read_messages(reader, first, &shared, hooks);
+            shared.inbox().ended = true;
             shared.changed.notify_all();
+            result
         });
-        let result = play(output, &shared, hooks);
-        // The reader stops when the connection does; it may still be
-        // waiting for the shim after the player failed.
-        let _ = closer.shutdown(Shutdown::Both);
-        result
+        let played = play(output, &shared, hooks);
+        if played.is_err() {
+            // The reader may still be waiting for the shim.
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+        let read = reading
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        played.and(read)
     })
 }
 
-/// Takes the shim's messages as they arrive. Volume applies at once; audio,
-/// flushes and corks go to the player.
-fn read_messages(stream: TcpStream, shared: &Shared, hooks: &Hooks) -> io::Result<()> {
-    let mut reader = BufReader::with_capacity(64 * 1024, stream);
+/// One message, or `None` when the connection closed between messages.
+/// QEMU's connection resets rather than closes when the machine stops.
+fn read_message(reader: &mut impl Read) -> io::Result<Option<(u8, Vec<u8>)>> {
+    let mut head = [0u8; 5];
+    match reader.read_exact(&mut head) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    }
+    let len = u32::from_le_bytes([head[1], head[2], head[3], head[4]]) as usize;
+    if len > MAX_MESSAGE {
+        return Err(invalid(&format!("message of {len} bytes")));
+    }
+    let mut payload = vec![0u8; len];
+    reader.read_exact(&mut payload)?;
+    Ok(Some((head[0], payload)))
+}
+
+/// Takes one stream's messages as they arrive. Volume applies at once;
+/// audio, flushes and corks go to the player.
+fn read_messages(
+    reader: &mut BufReader<TcpStream>,
+    first: Option<Vec<u8>>,
+    shared: &Shared,
+    hooks: &Hooks,
+) -> io::Result<End> {
     let mut format = None;
+    let mut pending = first.map(|payload| (MSG_FORMAT, payload));
     loop {
-        let mut head = [0u8; 5];
-        match reader.read_exact(&mut head) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+        let (kind, payload) = match pending.take() {
+            Some(message) => message,
+            None => match read_message(reader)? {
+                Some(message) => message,
+                None => return Ok(End::Eof),
+            },
+        };
+        match take_message(kind, payload, &mut format, shared, hooks) {
+            Ok(None) => {}
+            Ok(Some(end)) => return Ok(end),
+            // The connection may carry more streams after this one.
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                log::warn!("soloist audio: {error}; skipping the stream");
+                return skip_stream(reader);
+            }
             Err(error) => return Err(error),
         }
-        let len = u32::from_le_bytes([head[1], head[2], head[3], head[4]]) as usize;
-        if len > MAX_MESSAGE {
-            return Err(invalid(&format!("message of {len} bytes")));
-        }
-        let mut payload = vec![0u8; len];
-        reader.read_exact(&mut payload)?;
-        match head[0] {
-            MSG_FORMAT => {
-                format = Some(Format::parse(&payload)?);
-                // Tells the shim this receiver paces: from now on it sends
-                // only what the acknowledgements make room for.
-                shared.acknowledge(0)?;
-            }
-            MSG_PCM => {
-                let format = format.ok_or_else(|| invalid("audio before its format"))?;
-                let frame = format.bytes() * usize::from(NUM_CHANNELS);
-                if !len.is_multiple_of(frame) {
-                    return Err(invalid("audio block cut mid-frame"));
-                }
-                shared.inbox().blocks.push_back((format, payload));
-                shared.changed.notify_all();
-            }
-            MSG_FLUSH => {
-                let dropped: usize = {
-                    let mut inbox = shared.inbox();
-                    inbox.flushed = true;
-                    inbox.blocks.drain(..).map(|(_, block)| block.len()).sum()
-                };
-                // What the sink still holds goes now; the player flushes
-                // again after a write that was under way.
-                hooks.audio.seeked();
-                shared.changed.notify_all();
-                shared.acknowledge(dropped as u64)?;
-            }
-            MSG_CORK => {
-                let corked = match payload.first() {
-                    Some(1) => true,
-                    Some(_) => false,
-                    None => return Err(invalid("empty cork message")),
-                };
-                shared.inbox().corks.push_back(corked);
-                shared.changed.notify_all();
-            }
-            MSG_VOLUME => {
-                let bytes: [u8; 4] = payload
-                    .get(..4)
-                    .and_then(|bytes| bytes.try_into().ok())
-                    .ok_or_else(|| invalid("short volume message"))?;
-                let level = mixer_level(u32::from_le_bytes(bytes), hooks.mixer.volume());
-                hooks.mixer.set_volume(level);
-            }
-            // Newer shims may add messages; skipping them keeps this one working.
-            other => log::debug!("soloist audio: skipped message type {other}"),
+    }
+}
+
+/// Reads past the rest of a stream this receiver cannot play.
+fn skip_stream(reader: &mut BufReader<TcpStream>) -> io::Result<End> {
+    loop {
+        match read_message(reader)? {
+            None => return Ok(End::Eof),
+            Some((MSG_CLOSE, _)) => return Ok(End::Closed),
+            Some((MSG_FORMAT, payload)) => return Ok(End::Next(payload)),
+            Some(_) => {}
         }
     }
+}
+
+/// Acts on one message of a stream; `Some` when the stream ends with it.
+fn take_message(
+    kind: u8,
+    payload: Vec<u8>,
+    format: &mut Option<Format>,
+    shared: &Shared,
+    hooks: &Hooks,
+) -> io::Result<Option<End>> {
+    match kind {
+        MSG_FORMAT => {
+            if format.is_some() {
+                return Ok(Some(End::Next(payload)));
+            }
+            *format = Some(Format::parse(&payload)?);
+            // Tells the shim this receiver paces: from now on it sends
+            // only what the acknowledgements make room for.
+            shared
+                .acks
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .id = stream_id(&payload);
+            shared.acknowledge(0)?;
+        }
+        MSG_CLOSE => return Ok(Some(End::Closed)),
+        MSG_PCM => {
+            let format = format.ok_or_else(|| invalid("audio before its format"))?;
+            let frame = format.bytes() * usize::from(NUM_CHANNELS);
+            if !payload.len().is_multiple_of(frame) {
+                return Err(invalid("audio block cut mid-frame"));
+            }
+            shared.inbox().blocks.push_back((format, payload));
+            shared.changed.notify_all();
+        }
+        MSG_FLUSH => {
+            let dropped: usize = {
+                let mut inbox = shared.inbox();
+                inbox.flushed = true;
+                inbox.blocks.drain(..).map(|(_, block)| block.len()).sum()
+            };
+            // What the sink still holds goes now; the player flushes
+            // again after a write that was under way.
+            hooks.audio.seeked();
+            shared.changed.notify_all();
+            shared.acknowledge(dropped as u64)?;
+        }
+        MSG_CORK => {
+            let corked = match payload.first() {
+                Some(1) => true,
+                Some(_) => false,
+                None => return Err(invalid("empty cork message")),
+            };
+            shared.inbox().corks.push_back(corked);
+            shared.changed.notify_all();
+        }
+        MSG_VOLUME => {
+            let bytes: [u8; 4] = payload
+                .get(..4)
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or_else(|| invalid("short volume message"))?;
+            let level = mixer_level(u32::from_le_bytes(bytes), hooks.mixer.volume());
+            hooks.mixer.set_volume(level);
+        }
+        // Newer shims may add messages; skipping them keeps this one working.
+        other => log::debug!("soloist audio: skipped message type {other}"),
+    }
+    Ok(None)
 }
 
 /// Plays what the reader queued: a flush first, then cork changes in order,
@@ -430,8 +556,8 @@ fn play(output: &mut Output, shared: &Shared, hooks: &Hooks) -> io::Result<()> {
                 if !corked && let Some((format, block)) = inbox.blocks.pop_front() {
                     break Next::Block(format, block);
                 }
-                if let Some(end) = inbox.end.take() {
-                    break Next::End(end);
+                if inbox.ended {
+                    break Next::End;
                 }
                 inbox = shared
                     .changed
@@ -472,17 +598,18 @@ fn play(output: &mut Output, shared: &Shared, hooks: &Hooks) -> io::Result<()> {
                 }
                 shared.acknowledge(block.len() as u64)?;
             }
-            Next::End(result) => return result,
+            Next::End => return Ok(()),
         }
     }
 }
 
-fn send_ack(stream: &mut TcpStream, taken: u64, held_us: u32) -> io::Result<()> {
-    let mut message = [0u8; 17];
+fn send_ack(stream: &mut TcpStream, taken: u64, held_us: u32, id: u32) -> io::Result<()> {
+    let mut message = [0u8; 21];
     message[0] = MSG_ACK;
-    message[1..5].copy_from_slice(&12u32.to_le_bytes());
+    message[1..5].copy_from_slice(&16u32.to_le_bytes());
     message[5..13].copy_from_slice(&taken.to_le_bytes());
     message[13..17].copy_from_slice(&held_us.to_le_bytes());
+    message[17..21].copy_from_slice(&id.to_le_bytes());
     stream.write_all(&message)
 }
 
@@ -657,15 +784,22 @@ mod tests {
         assert_eq!(seen.events, ["start", "stop", "start", "stop"]);
     }
 
-    fn read_ack(stream: &mut TcpStream) -> (u64, u32) {
-        let mut ack = [0u8; 17];
+    /// Bytes taken, audio held and the stream's id.
+    fn read_full_ack(stream: &mut TcpStream) -> (u64, u32, u32) {
+        let mut ack = [0u8; 21];
         stream.read_exact(&mut ack).unwrap();
         assert_eq!(ack[0], MSG_ACK);
-        assert_eq!(u32::from_le_bytes(ack[1..5].try_into().unwrap()), 12);
+        assert_eq!(u32::from_le_bytes(ack[1..5].try_into().unwrap()), 16);
         (
             u64::from_le_bytes(ack[5..13].try_into().unwrap()),
             u32::from_le_bytes(ack[13..17].try_into().unwrap()),
+            u32::from_le_bytes(ack[17..21].try_into().unwrap()),
         )
+    }
+
+    fn read_ack(stream: &mut TcpStream) -> (u64, u32) {
+        let (taken, held, _) = read_full_ack(stream);
+        (taken, held)
     }
 
     fn receiver(seen: &Arc<Mutex<Seen>>, mixer: &Arc<dyn Mixer>) -> Receiver {
@@ -737,6 +871,83 @@ mod tests {
             seen.events,
             ["start", "write", "stop", "start", "write", "stop"]
         );
+    }
+
+    fn format_with_id(id: u32) -> Vec<u8> {
+        let mut payload = format(PA_SAMPLE_FLOAT32LE, 44100, 2);
+        payload.extend_from_slice(&id.to_le_bytes());
+        payload
+    }
+
+    #[test]
+    fn plays_the_streams_of_one_connection_in_turn() {
+        // The machine's port: every stream on one connection, each closed or
+        // replaced by the next, each acknowledged under its own id from 0.
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let mixer: Arc<dyn Mixer> = Arc::new(SoftMixer::open(MixerConfig::default()).unwrap());
+        let receiver = receiver(&seen, &mixer);
+        let mut port = TcpStream::connect((Ipv4Addr::LOCALHOST, receiver.port())).unwrap();
+
+        port.write_all(&message(MSG_FORMAT, &format_with_id(7)))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (0, 0, 7));
+        port.write_all(&message(MSG_PCM, &pcm(&[0.1, 0.1])))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (8, 40_000, 7));
+        port.write_all(&message(MSG_CLOSE, &[])).unwrap();
+
+        port.write_all(&message(MSG_FORMAT, &format_with_id(8)))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (0, 0, 8));
+        port.write_all(&message(MSG_PCM, &pcm(&[0.2, 0.2, 0.3, 0.3])))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (16, 40_000, 8));
+
+        // A stream whose shim never closed it ends at the next format.
+        port.write_all(&message(MSG_FORMAT, &format_with_id(9)))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (0, 0, 9));
+        port.write_all(&message(MSG_PCM, &pcm(&[0.4, 0.4])))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (8, 40_000, 9));
+
+        drop(port);
+        drop(receiver);
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen.samples,
+            [0.1f32, 0.1, 0.2, 0.2, 0.3, 0.3, 0.4, 0.4].map(f64::from)
+        );
+        assert_eq!(
+            seen.events,
+            [
+                "start", "write", "stop", "start", "write", "stop", "start", "write", "stop"
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_a_stream_it_cannot_play_and_plays_the_next() {
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let mixer: Arc<dyn Mixer> = Arc::new(SoftMixer::open(MixerConfig::default()).unwrap());
+        let receiver = receiver(&seen, &mixer);
+        let mut port = TcpStream::connect((Ipv4Addr::LOCALHOST, receiver.port())).unwrap();
+
+        port.write_all(&message(MSG_FORMAT, &format(PA_SAMPLE_FLOAT32LE, 48000, 2)))
+            .unwrap();
+        port.write_all(&message(MSG_PCM, &pcm(&[0.9, 0.9])))
+            .unwrap();
+        port.write_all(&message(MSG_CLOSE, &[])).unwrap();
+        port.write_all(&message(MSG_FORMAT, &format_with_id(3)))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (0, 0, 3));
+        port.write_all(&message(MSG_PCM, &pcm(&[0.1, 0.1])))
+            .unwrap();
+        assert_eq!(read_full_ack(&mut port), (8, 40_000, 3));
+
+        drop(port);
+        drop(receiver);
+        assert_eq!(seen.lock().unwrap().samples, [0.1f32, 0.1].map(f64::from));
     }
 
     #[test]

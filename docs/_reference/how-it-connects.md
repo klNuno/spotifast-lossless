@@ -428,17 +428,20 @@ credential store and passes it to Soloist on start.
   160 MiB of memory. When the Windows Hypervisor Platform feature is on,
   QEMU runs the machine's code on Windows' own hypervisor: Soloist is up
   in about 2 s, and on a recent desktop processor the machine takes about
-  2 % of one core while Soloist waits and 2 to 5 % while FLAC plays, in
+  0.3 % of one core while Soloist waits and about 1 % while FLAC plays, in
   about 200 MB. When the feature is off, QEMU falls back to translating
   the machine's code itself, with a 64 MiB cache of translated code. Every
   wakeup of the machine is costly there, so the shim sends 100 ms blocks
   instead of 10 ms, wakes Soloist to write only once 150 ms of its buffer
   are free, and the kernel groups Soloist's timers within 100 ms. The
-  machine then starts in about 7 s and takes about 4 % of one core while
-  Soloist waits and 6 to 10 % while FLAC plays. The machine's only network is
-  QEMU's private one: Spotifast reaches the WebSocket API and the pairing
-  endpoint through ports QEMU forwards on loopback, and the shim sends the
-  audio to the address QEMU connects to Spotifast's loopback port.
+  machine then starts in 7 to 10 s and takes about 2.5 % of one core while
+  Soloist waits and about 7 % while FLAC plays. The machine has no emulated
+  HPET, whose timer alone woke QEMU about 2,300 times a second. Its only
+  network is QEMU's private one: Spotifast reaches the WebSocket API and
+  the pairing endpoint through ports QEMU forwards on loopback. The shim
+  writes the audio to a virtio-serial port, which QEMU connects to
+  Spotifast's loopback port; through the network, split into packets, the
+  same audio cost the machine twice as much.
   Soloist and the shim sit on a read-only disk Spotifast writes when either
   changes (`system.img`); the account and the audio cache sit on a second,
   sparse disk the machine formats on first use (`data.img`). The client key
