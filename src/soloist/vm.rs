@@ -4,9 +4,9 @@
 //! kernel and a minimal user space (busybox and glibc from Debian, built by
 //! `soloist/vm/build-bundle.sh`) and runs Soloist in a machine with one
 //! processor, a little memory and QEMU's private user network. It needs no
-//! administrator, no Windows feature and no restart: QEMU translates the
-//! machine's code itself, which costs a few percent of one core while
-//! Soloist plays.
+//! administrator, no Windows feature and no restart: QEMU runs the machine
+//! on Windows' hypervisor when the Windows Hypervisor Platform feature is
+//! on, and translates its code itself otherwise.
 //!
 //! The machine gets three things from Spotifast's folder:
 //! - `boot.cpio`, its first file system: the shipped `base.cpio`, then this
@@ -200,7 +200,11 @@ impl Machine {
         };
         let mut command = Command::new(self.bundle.join("qemu-system-x86_64.exe"));
         command.arg("-L").arg(&self.bundle);
-        command.args(["-nodefaults", "-no-user-config", "-M", "pc"]);
+        // QEMU's emulated HPET keeps its main loop and Windows' thread pool
+        // waking about 2,300 times a second while the machine runs, even
+        // though Linux times itself with the hypervisor's timers or the APIC:
+        // 2 % of a core at idle without it, near 0 % with.
+        command.args(["-nodefaults", "-no-user-config", "-M", "pc,hpet=off"]);
         match std::env::var("SPOTIFAST_VM_ACCEL") {
             Ok(accel) => {
                 command.args(["-accel", &accel]);
