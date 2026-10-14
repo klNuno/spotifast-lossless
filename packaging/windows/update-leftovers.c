@@ -1,8 +1,8 @@
 /*
  * The Windows Installer package's removal of what the updater leaves in the
  * installation folder (packaging/windows/spotifast.wxs runs
- * RemoveUpdateLeftovers after RemoveFiles, only when Spotifast itself is
- * being uninstalled).
+ * RemoveUpdateLeftovers just before RemoveFiles, only when Spotifast itself
+ * is being uninstalled).
  *
  * fastframe-update stages each update in a .spotifast-update-<suffix> folder
  * inside the installation folder: its helper, which runs the package, and a

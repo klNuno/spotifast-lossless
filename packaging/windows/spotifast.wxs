@@ -288,10 +288,12 @@
       other files. Its removals would also run through RemoveFiles, where a
       file held open asks for a restart; here such a file just stays.
 
-      Deferred, after RemoveFiles and before RemoveFolders, so the folder is
-      empty when RemoveInstallFolder comes. It always succeeds: leftovers it
-      cannot remove never fail an uninstall. A rolled-back uninstall does not
-      bring them back, and nothing needs them once Spotifast is going.
+      Deferred, before RemoveFiles: that action also removes the folder for
+      RemoveInstallFolder (a RemoveFile row), after the package's own files,
+      so the staging folders must be gone by then. It always succeeds:
+      leftovers it cannot remove never fail an uninstall. A rolled-back
+      uninstall does not bring them back, and nothing needs them once
+      Spotifast is going.
     -->
     <SetProperty Id="RemoveUpdateLeftovers" Value="[INSTALLFOLDER]" Before="RemoveUpdateLeftovers"
       Sequence="execute" Condition='REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE' />
@@ -301,7 +303,7 @@
     <InstallExecuteSequence>
       <!-- The package being replaced in an update has nothing to check. -->
       <Custom Action="CheckRunningCopy" Before="InstallValidate" Condition="NOT UPGRADINGPRODUCTCODE" />
-      <Custom Action="RemoveUpdateLeftovers" After="RemoveFiles"
+      <Custom Action="RemoveUpdateLeftovers" Before="RemoveFiles"
         Condition='REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE' />
     </InstallExecuteSequence>
 

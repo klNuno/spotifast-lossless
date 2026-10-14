@@ -345,6 +345,11 @@ class PackageTest(unittest.TestCase):
         self.addCleanup(handle.close)
         return handle
 
+    def assertFolderGone(self):
+        if self.folder.exists():
+            left = sorted(str(path.relative_to(self.folder)) for path in self.folder.rglob("*"))
+            self.fail(f"{self.folder} still holds {left}\n" + read_log(self.logs[-1])[-20000:])
+
     def assertRemoved(self):
         self.assertFalse(self.folder.exists() and any(p.name in FILES for p in self.folder.iterdir()))
         self.assertEqual(installed_products(), [])
@@ -360,7 +365,7 @@ class PackageTest(unittest.TestCase):
         self.assertFalse(self.desktop.exists())
         self.assertSucceeded(self.uninstall(FIRST))
         self.assertRemoved()
-        self.assertFalse(self.folder.exists())
+        self.assertFolderGone()
 
     def test_uninstall_removes_what_the_updater_staged(self):
         self.assertSucceeded(self.install_like_the_updater(FIRST))
@@ -368,7 +373,7 @@ class PackageTest(unittest.TestCase):
         self.stage_update("abc")
         self.assertSucceeded(self.uninstall(FIRST))
         self.assertRemoved()
-        self.assertFalse(self.folder.exists())
+        self.assertFolderGone()
 
     def test_uninstall_removes_only_staging_folders_and_goes_on_past_a_held_file(self):
         self.assertSucceeded(self.install_like_the_updater(FIRST))
@@ -405,7 +410,7 @@ class PackageTest(unittest.TestCase):
         handle.close()
         self.assertSucceeded(self.uninstall(SECOND))
         self.assertRemoved()
-        self.assertFalse(self.folder.exists())
+        self.assertFolderGone()
 
     def test_uninstall_leaves_links_another_program_took_over(self):
         self.assertSucceeded(self.install_like_the_updater(FIRST))
@@ -483,7 +488,7 @@ class PackageTest(unittest.TestCase):
         # The package now owns what Inno Setup put there.
         self.assertSucceeded(self.uninstall(SECOND))
         self.assertRemoved()
-        self.assertFalse(self.folder.exists())
+        self.assertFolderGone()
 
     def test_package_run_by_hand_takes_over_an_inno_install_where_it_is(self):
         self.install_with_inno()
