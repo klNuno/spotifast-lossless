@@ -45,8 +45,9 @@ const CONTROL_PORT: u16 = 4070;
 const PAIRING_PORT: u16 = 4071;
 /// Memory for Linux, Soloist and its file cache.
 const MEMORY_MB: u32 = 160;
-/// QEMU's cache of translated code, in MiB. Soloist's code fills 32 MiB
-/// often enough that translating it again costs more than the memory.
+/// QEMU's cache of translated code, in MiB, when Windows' hypervisor is not
+/// available. Soloist's code fills 32 MiB often enough that translating it
+/// again costs more than the memory.
 const CODE_CACHE_MB: u32 = 64;
 /// Audio per message from the shim. Every message wakes the machine several
 /// times; 100 ms instead of the shim's 10 ms cuts that tenfold. The 300 ms
@@ -199,11 +200,19 @@ impl Machine {
         };
         let mut command = Command::new(self.bundle.join("qemu-system-x86_64.exe"));
         command.arg("-L").arg(&self.bundle);
-        command.args(["-nodefaults", "-no-user-config", "-M", "pc", "-accel"]);
-        command.arg(
-            std::env::var("SPOTIFAST_VM_ACCEL")
-                .unwrap_or_else(|_| format!("tcg,tb-size={CODE_CACHE_MB}")),
-        );
+        command.args(["-nodefaults", "-no-user-config", "-M", "pc"]);
+        match std::env::var("SPOTIFAST_VM_ACCEL") {
+            Ok(accel) => {
+                command.args(["-accel", &accel]);
+            }
+            // Windows' own hypervisor runs the machine's code directly when
+            // the Windows Hypervisor Platform feature is on; QEMU falls back
+            // to translating it when the feature is off.
+            Err(_) => {
+                command.args(["-accel", "whpx", "-accel"]);
+                command.arg(format!("tcg,tb-size={CODE_CACHE_MB}"));
+            }
+        }
         command.args(["-cpu", "max", "-smp", "1", "-display", "none", "-no-reboot"]);
         command.args(["-m", &MEMORY_MB.to_string()]);
         command.arg("-kernel").arg(self.bundle.join("vmlinuz"));

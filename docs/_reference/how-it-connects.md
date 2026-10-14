@@ -424,13 +424,18 @@ credential store and passes it to Soloist on start.
 - On Windows, Soloist runs in a small Linux machine that ships with
   Spotifast in `vm\`: QEMU, Debian's cloud kernel, busybox and glibc
   (`soloist/vm/build-bundle.sh`, `soloist/vm/build-qemu.sh`). It needs no
-  administrator, no Windows feature and no restart. QEMU translates the
-  machine's code itself, one processor and 160 MiB of memory. Every wakeup
-  of the machine is costly there, so the shim sends 100 ms blocks instead
-  of 10 ms, wakes Soloist to write only once 150 ms of its buffer are free,
-  and the kernel groups Soloist's timers within 100 ms. On a recent desktop
-  processor the machine then takes about 4 % of one core while Soloist
-  waits and 6 to 10 % while FLAC plays. The machine's only network is
+  administrator, no Windows feature and no restart. One processor and
+  160 MiB of memory. When the Windows Hypervisor Platform feature is on,
+  QEMU runs the machine's code on Windows' own hypervisor: Soloist is up
+  in about 2 s, and on a recent desktop processor the machine takes about
+  2 % of one core while Soloist waits and 2 to 5 % while FLAC plays, in
+  about 200 MB. When the feature is off, QEMU falls back to translating
+  the machine's code itself, with a 64 MiB cache of translated code. Every
+  wakeup of the machine is costly there, so the shim sends 100 ms blocks
+  instead of 10 ms, wakes Soloist to write only once 150 ms of its buffer
+  are free, and the kernel groups Soloist's timers within 100 ms. The
+  machine then starts in about 7 s and takes about 4 % of one core while
+  Soloist waits and 6 to 10 % while FLAC plays. The machine's only network is
   QEMU's private one: Spotifast reaches the WebSocket API and the pairing
   endpoint through ports QEMU forwards on loopback, and the shim sends the
   audio to the address QEMU connects to Spotifast's loopback port.
