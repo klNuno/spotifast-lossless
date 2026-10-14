@@ -10512,7 +10512,7 @@ impl App {
             Action::SetCustomTitlebar(custom) => {
                 if self.settings.custom_titlebar != custom {
                     self.settings.custom_titlebar = custom;
-                    crate::window::set_custom_titlebar(custom);
+                    fastframe_titlebar::set_enabled(custom);
                     self.mark_settings_dirty();
                     if !self.settings.winamp_window {
                         // Decorations are fixed at creation. Replace only the
@@ -12826,7 +12826,7 @@ mod tests {
         assert!(app.settings.custom_titlebar);
         assert!(app.switch_intent, "the main window is replaced");
         assert_eq!(
-            crate::window::custom_titlebar(),
+            fastframe_titlebar::enabled(),
             cfg!(any(windows, target_os = "linux"))
         );
 
@@ -12838,7 +12838,7 @@ mod tests {
         app.apply(Action::SetCustomTitlebar(false), &ctx);
         assert!(!app.settings.custom_titlebar);
         assert!(!app.switch_intent, "the mini player is not the main window");
-        assert!(!crate::window::custom_titlebar());
+        assert!(!fastframe_titlebar::enabled());
     }
 
     #[test]

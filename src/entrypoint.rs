@@ -477,9 +477,8 @@ pub(crate) fn run() -> eframe::Result<()> {
     if let Some(name) = cli.device_name {
         settings.device_name = name;
     }
-    #[cfg(target_os = "linux")]
-    spotifast::window::init_linux_window_controls();
-    spotifast::window::set_custom_titlebar(settings.custom_titlebar);
+    fastframe_titlebar::init();
+    fastframe_titlebar::set_enabled(settings.custom_titlebar);
     // Colour emoji: the fonts are found off this thread. A demo capture
     // draws every picture in the frame that shows it.
     #[cfg(feature = "demo")]
@@ -864,7 +863,7 @@ fn native_options(
                 .with_title_shown(false)
                 // Windows has no equivalent to macOS's floating traffic lights.
                 // Removing its decorations lets the app surface fill the window.
-                .with_decorations(main_window_decorated(spotifast::window::custom_titlebar()))
+                .with_decorations(main_window_decorated(fastframe_titlebar::enabled()))
                 .with_inner_size(size)
                 .with_min_inner_size(inner_size.unwrap_or(spotifast::window::MAIN_MIN_SIZE))
                 .with_fullscreen(fullscreen);
@@ -1065,7 +1064,7 @@ mod native_window_tests {
         let options = native_options(false, None, None, Geometry::default());
         assert_eq!(
             options.viewport.decorations,
-            Some(!spotifast::window::custom_titlebar())
+            Some(!fastframe_titlebar::enabled())
         );
         assert_eq!(options.viewport.fullsize_content_view, Some(true));
         assert_eq!(options.viewport.titlebar_shown, Some(false));

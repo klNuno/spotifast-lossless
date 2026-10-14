@@ -5917,7 +5917,6 @@ dependencies = [
  "egui",
  "egui_extras",
  "fastframe-audio",
- "fastframe-desktop",
  "fastframe-emoji",
  "fastframe-file",
  "fastframe-fonts",
