@@ -697,7 +697,7 @@ pub(crate) fn run() -> eframe::Result<()> {
         )
         .inspect_err(|error| {
             log::error!("Native window failed: {error}");
-            #[cfg(all(windows, target_arch = "aarch64"))]
+            #[cfg(windows)]
             if matches!(
                 error,
                 eframe::Error::Glutin(_)

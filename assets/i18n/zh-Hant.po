@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: Spotifast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/spotifast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-14 01:05+0200\n"
+"POT-Creation-Date: 2026-10-14 08:00+0200\n"
 "PO-Revision-Date: 2026-09-09 13:30+0000\n"
 "Last-Translator: Spotifast contributors\n"
 "Language-Team: Traditional Chinese\n"
@@ -28,12 +28,12 @@ msgstr "暫停 {name}"
 msgid "Play {name}"
 msgstr "播放 {name}"
 
-#: src/ui/sidebar.rs:302 src/app.rs:2786 src/app.rs:19236
+#: src/ui/sidebar.rs:302 src/app.rs:2786 src/app.rs:19239
 #: src/ui/collection.rs:1919 src/ui/collection.rs:2134
 msgid "Playlist"
 msgstr "播放清單"
 
-#: src/ui/sidebar.rs:312 src/app.rs:2760 src/app.rs:19241
+#: src/ui/sidebar.rs:312 src/app.rs:2760 src/app.rs:19244
 #: src/ui/collection.rs:2127 src/ui/home.rs:78 src/ui/keys.rs:264
 #: src/ui/winamp/playlist.rs:653
 msgid "Liked Songs"
@@ -755,7 +755,7 @@ msgid "Queue cleared"
 msgstr "已清除待播清單"
 
 #. Translators: Keep {date} unchanged. It is a date in YYYY-MM-DD form.
-#: src/app.rs:5222 src/app.rs:19226
+#: src/app.rs:5222 src/app.rs:19229
 #, rust-format
 msgid "Queue {date}"
 msgstr "待播清單 {date}"
@@ -1100,7 +1100,7 @@ msgstr "無法上傳封面：{error}。請再試一次。"
 
 #. Translators: Keep {track} unchanged. It is the name of the song,
 #. playlist, album, or artist the radio is based on, not translated.
-#: src/app.rs:19246 src/app/radio.rs:38
+#: src/app.rs:19249 src/app/radio.rs:38
 #, rust-format
 msgid "{track} Radio"
 msgstr "{track} 電台"
@@ -3206,11 +3206,11 @@ msgstr "晚安"
 msgid "On Wayland, use your desktop's Keep Above shortcut or window rule."
 msgstr "在 Wayland 上，請使用桌面環境的「最上層顯示」快捷鍵或視窗規則。"
 
-#: src/window.rs:30
+#: src/window.rs:39
 msgid "Spotifast cannot open its window"
 msgstr "Spotifast 無法開啟視窗"
 
-#: src/window.rs:33
+#: src/window.rs:45
 msgid ""
 "On Windows on ARM, the OpenGL that Spotifast draws with comes from "
 "Microsoft's OpenCL, OpenGL & Vulkan Compatibility Pack. Open its Microsoft "
@@ -3219,6 +3219,16 @@ msgstr ""
 "在 ARM 版 Windows 上，Spotifast 用來繪製介面的 OpenGL 由 Microsoft 的 "
 "OpenCL, OpenGL & Vulkan Compatibility Pack 提供。要開啟其 Microsoft Store 頁"
 "面以安裝或修復嗎？"
+
+#. Translators: Keep {url} exactly as written. It becomes the address
+#. of the Spotifast download page.
+#: src/window.rs:55
+#, rust-format
+msgid ""
+"Spotifast needs a graphics driver with OpenGL 2.0 or newer, and this PC or "
+"virtual machine does not provide one. Install the graphics driver, or turn "
+"on GPU acceleration for the virtual machine. Open {url} to read more?"
+msgstr "Spotifast 需要支援 OpenGL 2.0 或更新版本的顯示卡驅動程式，而這台電腦或虛擬機器沒有提供。請安裝顯示卡驅動程式，或為虛擬機器開啟 GPU 加速。要開啟 {url} 了解更多嗎？"
 
 #: src/app.rs:1937
 msgid "Soloist key saved"

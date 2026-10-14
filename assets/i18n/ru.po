@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: Spotifast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/spotifast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-14 01:05+0200\n"
+"POT-Creation-Date: 2026-10-14 08:00+0200\n"
 "PO-Revision-Date: 2026-09-23 20:00+0000\n"
 "Last-Translator: Spotifast contributors\n"
 "Language-Team: Russian\n"
@@ -29,12 +29,12 @@ msgstr "Приостановить {name}"
 msgid "Play {name}"
 msgstr "Воспроизвести {name}"
 
-#: src/ui/sidebar.rs:302 src/app.rs:2786 src/app.rs:19236
+#: src/ui/sidebar.rs:302 src/app.rs:2786 src/app.rs:19239
 #: src/ui/collection.rs:1919 src/ui/collection.rs:2134
 msgid "Playlist"
 msgstr "Плейлист"
 
-#: src/ui/sidebar.rs:312 src/app.rs:2760 src/app.rs:19241
+#: src/ui/sidebar.rs:312 src/app.rs:2760 src/app.rs:19244
 #: src/ui/collection.rs:2127 src/ui/home.rs:78 src/ui/keys.rs:264
 #: src/ui/winamp/playlist.rs:653
 msgid "Liked Songs"
@@ -775,7 +775,7 @@ msgid "Queue cleared"
 msgstr "Очередь очищена"
 
 #. Translators: Keep {date} unchanged. It is a date in YYYY-MM-DD form.
-#: src/app.rs:5222 src/app.rs:19226
+#: src/app.rs:5222 src/app.rs:19229
 #, rust-format
 msgid "Queue {date}"
 msgstr "Очередь {date}"
@@ -1136,7 +1136,7 @@ msgstr "Не удалось загрузить обложку: {error}. Попр
 
 #. Translators: Keep {track} unchanged. It is the name of the song,
 #. playlist, album, or artist the radio is based on, not translated.
-#: src/app.rs:19246 src/app/radio.rs:38
+#: src/app.rs:19249 src/app/radio.rs:38
 #, rust-format
 msgid "{track} Radio"
 msgstr "Радио по треку «{track}»"
@@ -3329,11 +3329,11 @@ msgstr ""
 "В Wayland используй сочетание клавиш или правило окна «Поверх других окон» "
 "своего окружения."
 
-#: src/window.rs:30
+#: src/window.rs:39
 msgid "Spotifast cannot open its window"
 msgstr "Spotifast не может открыть окно"
 
-#: src/window.rs:33
+#: src/window.rs:45
 msgid ""
 "On Windows on ARM, the OpenGL that Spotifast draws with comes from "
 "Microsoft's OpenCL, OpenGL & Vulkan Compatibility Pack. Open its Microsoft "
@@ -3342,6 +3342,16 @@ msgstr ""
 "В Windows на ARM OpenGL, с помощью которого рисует Spotifast, предоставляет "
 "пакет Microsoft OpenCL, OpenGL & Vulkan Compatibility Pack. Открыть его "
 "страницу в Microsoft Store, чтобы установить или восстановить его?"
+
+#. Translators: Keep {url} exactly as written. It becomes the address
+#. of the Spotifast download page.
+#: src/window.rs:55
+#, rust-format
+msgid ""
+"Spotifast needs a graphics driver with OpenGL 2.0 or newer, and this PC or "
+"virtual machine does not provide one. Install the graphics driver, or turn "
+"on GPU acceleration for the virtual machine. Open {url} to read more?"
+msgstr "Spotifast нужен графический драйвер с OpenGL 2.0 или новее, а этот компьютер или эта виртуальная машина его не предоставляет. Установите графический драйвер или включите GPU-ускорение для виртуальной машины. Открыть {url}, чтобы узнать больше?"
 
 #: src/app.rs:1937
 msgid "Soloist key saved"
