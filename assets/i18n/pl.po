@@ -3402,6 +3402,14 @@ msgstr "Zastąp zapisany klucz"
 msgid "Paste the key"
 msgstr "Wklej klucz"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr ""
+"Spotify ogranicza teraz wspólną aplikację, więc może to potrwać kilka minut. "
+"Osobista aplikacja zaloguje cię bez czekania."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Nie udało się wczytać tej sekcji"
 

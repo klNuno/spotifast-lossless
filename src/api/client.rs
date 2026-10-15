@@ -410,6 +410,21 @@ impl ApiClient {
         self.background_limiter.acquire().await.ok()
     }
 
+    /// Whether Spotify's last `Retry-After` still holds this app's requests
+    /// back. A cooldown being extended right now counts as none: the request
+    /// that asks next waits for it anyway.
+    pub(crate) fn cooling_down(&self) -> bool {
+        self.cooldown_until
+            .try_lock()
+            .is_ok_and(|until| *until > Instant::now())
+    }
+
+    /// Holds requests back as a `Retry-After` of `wait` would.
+    #[cfg(test)]
+    pub(crate) async fn hold_back_for_test(&self, wait: Duration) {
+        self.extend_cooldown(wait).await;
+    }
+
     /// The Home section's `sp_t` field, from an already verified Web API
     /// grant. This is never sent to the Web API under the playback identity.
     pub(crate) async fn home_context_token(&self) -> Result<String> {

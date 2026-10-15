@@ -323,6 +323,14 @@ impl ApiGateway {
         matches!(self.state(ApiSource::Personal), SessionState::Ready { .. })
     }
 
+    /// Whether a request for the shared app would wait now: its grant is not
+    /// verified yet, or Spotify's rate limit holds it back. Spotify divides
+    /// that app's quota among every listener, so the wait can last minutes.
+    pub fn shared_waiting(&self) -> bool {
+        !matches!(self.state(ApiSource::Shared), SessionState::Ready { .. })
+            || self.shared.client().cooling_down()
+    }
+
     /// Reuse configured HTTP transport only after verifying the account.
     /// Pathfinder itself receives the playback session's Login5 credentials.
     pub(crate) fn prerelease_http_client(&self) -> Option<Arc<ApiClient>> {
@@ -399,6 +407,26 @@ impl ApiGateway {
 mod tests {
     use super::*;
     use std::future::Future;
+
+    /// The playlist list leaves the shared app while that app is still
+    /// verifying or Spotify's rate limit holds it back (#698).
+    #[tokio::test]
+    async fn the_shared_app_waits_until_verified_and_while_rate_limited() {
+        let gateway = ApiGateway::new(reqwest::Client::new(), Arc::new(NetActivity::default()));
+        assert!(gateway.shared_waiting(), "not signed in");
+        gateway.begin_verification(ApiSource::Shared, provider("shared", ApiSource::Shared));
+        assert!(gateway.shared_waiting(), "still verifying");
+        gateway
+            .install(ApiSource::Shared, AccountId::new("alice"))
+            .unwrap();
+        assert!(!gateway.shared_waiting(), "verified and free");
+        gateway
+            .shared
+            .client()
+            .hold_back_for_test(std::time::Duration::from_secs(30))
+            .await;
+        assert!(gateway.shared_waiting(), "rate limited");
+    }
 
     /// Rejects a token whose provider changed while resolution was pending.
     #[tokio::test]

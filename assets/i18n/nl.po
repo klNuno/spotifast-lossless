@@ -3381,6 +3381,14 @@ msgstr "Opgeslagen sleutel vervangen"
 msgid "Paste the key"
 msgstr "Sleutel plakken"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr ""
+"Spotify beperkt de gedeelde app op dit moment, dus dit kan minuten duren. "
+"Met een persoonlijke app meld je je meteen aan."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Kan deze rij niet laden"
 

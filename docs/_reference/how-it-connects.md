@@ -50,9 +50,21 @@ browser approval requests only the streaming permission and always shows the
 consent dialog. The playback session uses the account ID verified by either
 Web API grant. A verified personal app can complete sign-in while the shared
 app's verification is still waiting; the sign-in card offers its setup under
-the spinner, since Settings opens only once signed in. That verification keeps retrying in the
+the spinner, since Settings opens only once signed in. When Spotify answers
+that verification with its rate limit, the card says so and unfolds the setup
+once. That verification keeps retrying in the
 background through rate limits without showing the top bar's "Waiting for
 Spotify" spinner, since nothing on screen waits for it.
+
+The account's playlist list is the one library view only the shared app
+serves through the Web API. While that app is still verifying, or Spotify's
+`Retry-After` holds it back, the list is read from the rootlist over the local
+playback session for the same account: Spotify decorates each row with the
+playlist's name, cover, owner, length and revision, so one paged read lists
+them all, with no per-app quota. A list asked for before the session connects
+is read this way once it does. Until the Web API lists them again, another
+person's playlist shows its owner's Spotify ID rather than a display name,
+and the public flag stays unknown.
 
 Web API sign-in opens the browser only after its local callback port is available. If
 port 8989 is occupied, the sign-in screen keeps the error visible. Close the

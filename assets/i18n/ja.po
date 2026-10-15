@@ -3349,6 +3349,12 @@ msgstr "保存済みのキーを置き換え"
 msgid "Paste the key"
 msgstr "キーを貼り付け"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr "Spotify が現在共有アプリを制限しているため、数分かかることがあります。個人用アプリなら待たずにサインインできます。"
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "このセクションを読み込めませんでした"
 

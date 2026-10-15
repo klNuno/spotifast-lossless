@@ -631,9 +631,35 @@ impl Engine {
     /// Account playlist tree in Spotify order, including folder markers,
     /// and which of its playlists the account may add songs to.
     pub async fn rootlist(&self) -> Result<Rootlist> {
+        let pages = self.rootlist_pages().await?;
+        let editable = pages.iter().flat_map(editable_uris).collect();
+        let uris: Vec<String> = pages
+            .iter()
+            .flat_map(|page| page.items.iter().filter_map(|item| item.uri.clone()))
+            .collect();
+        Ok(Rootlist {
+            entries: parse_rootlist(&uris),
+            editable,
+        })
+    }
+
+    /// The account's playlists in Spotify's order, as the Web API lists
+    /// them, from the rootlist alone. The session has no per-app quota, so
+    /// this answers while the shared app waits out Spotify's rate limit.
+    pub async fn library(&self) -> Result<Vec<crate::api::models::Playlist>> {
+        let pages = self.rootlist_pages().await?;
+        Ok(pages
+            .iter()
+            .flat_map(crate::session_reads::listed_playlists)
+            .collect())
+    }
+
+    /// Every page of the rootlist, decorated as Spotify sends it.
+    async fn rootlist_pages(
+        &self,
+    ) -> Result<Vec<librespot_protocol::playlist4_external::ListItems>> {
         use protobuf::Message as _;
-        let mut uris = Vec::new();
-        let mut editable = std::collections::BTreeSet::new();
+        let mut pages = Vec::new();
         let mut from = 0usize;
         loop {
             let bytes = self
@@ -651,17 +677,13 @@ impl Engine {
             };
             let count = contents.items.len();
             let truncated = contents.truncated();
-            editable.extend(editable_uris(&contents));
-            uris.extend(contents.items.into_iter().filter_map(|item| item.uri));
+            pages.push(contents);
             if !truncated || count == 0 {
                 break;
             }
             from += count;
         }
-        Ok(Rootlist {
-            entries: parse_rootlist(&uris),
-            editable,
-        })
+        Ok(pages)
     }
 
     /// The streaming session, for reads that need no Web API quota.

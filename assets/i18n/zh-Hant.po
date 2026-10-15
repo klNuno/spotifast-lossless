@@ -3273,6 +3273,12 @@ msgstr "取代已儲存的金鑰"
 msgid "Paste the key"
 msgstr "貼上金鑰"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr "Spotify 目前正在限制共用應用程式，可能需要幾分鐘。使用個人應用程式即可立即登入，無需等待。"
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "無法載入這個區塊"
 

@@ -42,8 +42,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
             } else {
                 500.0
             };
-            // Room for the personal app setup unfolded under the spinner.
+            // Room for the personal app setup unfolded under the spinner, and
+            // for the word that Spotify is holding the shared app back.
             let card_height = card_height + if connecting && app.login_personal_app { 190.0 } else { 0.0 };
+            let card_height = card_height + if connecting && app.login_shared_limited { 48.0 } else { 0.0 };
             let card_height = card_height.min((rect.height() - 64.0).max(0.0));
             let card = Rect::from_center_size(
                 rect.center() - Vec2::new(0.0, 20.0),
@@ -98,6 +100,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                                 theme::spinner(ui, 18.0, palette.accent);
                                 theme::text(ui, gettext(locale, "Connecting to Spotify…"), theme::medium(14.0), palette.text);
                             });
+                            if app.login_shared_limited {
+                                ui.add_space(8.0);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(gettext(
+                                            locale,
+                                            "Spotify is limiting the shared app right now, so this can take minutes. A personal app signs you in without waiting.",
+                                        ))
+                                        .font(theme::regular(12.5))
+                                        .color(palette.secondary),
+                                    )
+                                    .wrap(),
+                                );
+                            }
                             personal_app(ui, app);
                         }
                         AuthStatus::Failed(message) => {
@@ -522,10 +538,11 @@ mod tests {
             output.textures_delta.clear();
             output.platform_output.accesskit_update.unwrap()
         };
+        // A label's text is its accessible value; a button's, its label.
         let bounds = |tree: &egui::accesskit::TreeUpdate, label: &str| {
             tree.nodes
                 .iter()
-                .find(|(_, node)| node.label() == Some(label))
+                .find(|(_, node)| node.label() == Some(label) || node.value() == Some(label))
                 .map(|(_, node)| node.bounds().unwrap())
         };
         let click = |at: egui::Pos2| {
@@ -552,6 +569,10 @@ mod tests {
         assert!(
             bounds(&first, "Authorize").is_none(),
             "the setup starts folded"
+        );
+        assert!(
+            bounds(&first, LIMITED).is_none(),
+            "no word of a rate limit Spotify has not sent"
         );
         let link =
             bounds(&first, "Personal Spotify app").expect("the waiting card offers a personal app");
@@ -584,6 +605,20 @@ mod tests {
                 .any(|action| matches!(action, Action::ConfigurePersonalWebApp)),
             "Authorize starts the personal app's sign-in"
         );
+
+        // A rate limit Spotify reported is said above the setup, with the
+        // buttons still in view.
+        app.login_shared_limited = true;
+        for _ in 0..30 {
+            frame(&mut app, vec![]);
+        }
+        let limited = frame(&mut app, vec![]);
+        let notice =
+            bounds(&limited, LIMITED).expect("the card says Spotify is limiting the shared app");
+        let authorize = bounds(&limited, "Authorize").unwrap();
+        assert!(notice.y1 <= authorize.y0, "the word comes before the setup");
         let _ = std::fs::remove_dir_all(root);
     }
+
+    const LIMITED: &str = "Spotify is limiting the shared app right now, so this can take minutes. A personal app signs you in without waiting.";
 }

@@ -3251,3 +3251,9 @@ msgstr ""
 #: src/ui/settings.rs:842
 msgid "Paste the key"
 msgstr ""
+
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr ""

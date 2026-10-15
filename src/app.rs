@@ -273,6 +273,8 @@ pub struct App {
     proxy_form_edited: bool,
     /// The sign-in card's personal app setup is unfolded.
     pub login_personal_app: bool,
+    /// Spotify's rate limit holds back the shared app the sign-in waits on.
+    pub login_shared_limited: bool,
     settings_dirty: bool,
     last_settings_save: Instant,
     pub backend: Backend,
@@ -887,6 +889,7 @@ impl App {
             last_proxy_applied: 0,
             proxy_form_edited: false,
             login_personal_app: false,
+            login_shared_limited: false,
             settings_dirty: false,
             last_settings_save: Instant::now(),
             backend,
@@ -2225,6 +2228,14 @@ impl App {
                     Err(error) => log::debug!("album type unavailable for {uri}: {error}"),
                 },
                 Event::WebApp { client_id } => self.web_app = client_id,
+                Event::SharedRateLimited => {
+                    // The way past the wait unfolds once; folding it again
+                    // is the user's to keep.
+                    if !self.login_shared_limited {
+                        self.login_personal_app = true;
+                    }
+                    self.login_shared_limited = true;
+                }
                 Event::UpdateSupport(result) => {
                     if result.is_ok()
                         && self.settings.download_updates_automatically
@@ -2296,6 +2307,10 @@ impl App {
     }
 
     fn handle_auth(&mut self, status: AuthStatus) {
+        // Only the sign-in under way can be the one Spotify holds back.
+        if !matches!(status, AuthStatus::Connecting) {
+            self.login_shared_limited = false;
+        }
         match &status {
             AuthStatus::Connected { .. } => {
                 self.sign_in_url = None;
@@ -26547,6 +26562,36 @@ mod tests {
         assert!(
             matches!(app.actions.as_slice(), [Action::PlayContext { uri, offset_uri: None, offset_index: None }] if uri == "spotify:playlist:unchanged")
         );
+    }
+
+    /// Spotify's rate limit on the shared app unfolds the personal app setup
+    /// once, so a sign-in stuck behind it shows the way past; the word goes
+    /// once the sign-in ends.
+    #[test]
+    fn a_rate_limited_sign_in_unfolds_the_personal_app_once() {
+        // #given a sign-in waiting on the shared app
+        let mut app = headless_app();
+        app.handle_auth(AuthStatus::Connecting);
+
+        // #when Spotify holds the shared app back
+        app.handle_backend_events(vec![Event::SharedRateLimited]);
+
+        // #then the card says so and unfolds the setup
+        assert!(app.login_shared_limited);
+        assert!(app.login_personal_app);
+
+        // #when the user folds it and Spotify says it again
+        app.login_personal_app = false;
+        app.handle_backend_events(vec![Event::SharedRateLimited]);
+
+        // #then it stays folded
+        assert!(!app.login_personal_app);
+
+        // #when the sign-in ends
+        app.handle_auth(AuthStatus::SignedOut);
+
+        // #then the word goes with it
+        assert!(!app.login_shared_limited);
     }
 
     /// A playlist shared by invitation takes songs once Spotify's rootlist

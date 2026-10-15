@@ -3397,6 +3397,14 @@ msgstr "Замени сохранённый ключ"
 msgid "Paste the key"
 msgstr "Вставь ключ"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr ""
+"Spotify сейчас ограничивает общее приложение, поэтому это может занять "
+"несколько минут. С личным приложением вход проходит без ожидания."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Не удалось загрузить этот раздел"
 

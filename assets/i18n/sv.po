@@ -3359,6 +3359,14 @@ msgstr "Ersätt den sparade nyckeln"
 msgid "Paste the key"
 msgstr "Klistra in nyckeln"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr ""
+"Spotify begränsar den delade appen just nu, så det här kan ta flera minuter. "
+"Med en personlig app loggar du in utan att vänta."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Kunde inte läsa in den här sektionen"
 

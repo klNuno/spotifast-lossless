@@ -952,6 +952,9 @@ pub enum Event {
     WebApp {
         client_id: Option<String>,
     },
+    /// Spotify's rate limit holds back the shared app while sign-in waits
+    /// for it to name the account.
+    SharedRateLimited,
     LikedSongsCache {
         account_id: String,
         generation: u64,
@@ -1630,6 +1633,10 @@ struct Worker {
     playlist_header_lookup: PlaylistHeaderLookup,
     /// Radios asked for before the streaming session was ready, by seed.
     radio_waiting: BTreeMap<String, u64>,
+    /// The playlist list asked for before the streaming session was ready,
+    /// by generation, and its request, which may be waiting on the shared
+    /// app. The session reads it instead once it connects.
+    library_waiting: Option<(u64, tokio::task::AbortHandle)>,
     prerelease_waiting: Option<(String, u64)>,
     /// True while a playback grant or engine connection is in flight, so a
     /// second attempt does not pile up.
@@ -1714,6 +1721,7 @@ impl Worker {
             audiobook_lookup: BTreeSet::new(),
             playlist_header_lookup: PlaylistHeaderLookup::default(),
             radio_waiting: BTreeMap::new(),
+            library_waiting: None,
             prerelease_waiting: None,
             engine_busy: false,
             search_tasks: Vec::new(),
@@ -2036,6 +2044,10 @@ impl Worker {
                     }
                 }
                 Command::Api(ApiRequest::Search { query, serial }) => self.search(query, serial),
+                Command::Api(ApiRequest::MyPlaylists {
+                    offset: 0,
+                    generation,
+                }) => self.list_playlists(generation),
                 Command::Api(request) => {
                     self.dispatch(request);
                 }
@@ -2704,9 +2716,12 @@ impl Worker {
         let client = self.api.verification_client(source);
         let gateway = Arc::clone(&self.api);
         let commands = self.commands.clone();
+        let events = self.events.clone();
+        let waker = self.waker.clone();
         let attempt = self.authorization_attempt;
         tokio::spawn(async move {
             let mut wait = Duration::from_secs(2);
+            let mut told = false;
             let error = loop {
                 if !lease.current() {
                     let _ = commands.send(Command::SignInEnded { source, attempt });
@@ -2727,6 +2742,17 @@ impl Worker {
                     Err(error) if error.status().is_some_and(|status| status < 500) => break error,
                     Err(error) => {
                         log::warn!("Spotify sign-in verification will retry: {error}");
+                        // The shared app's quota is divided among everyone
+                        // using it, so this wait can last minutes. Say so
+                        // once: a personal app has a quota of its own.
+                        if source == ApiSource::Shared
+                            && !told
+                            && matches!(error, ApiError::RateLimited | ApiError::QuotaExhausted)
+                        {
+                            told = true;
+                            let _ = events.send(Event::SharedRateLimited);
+                            waker.wake();
+                        }
                         tokio::time::sleep(wait).await;
                         wait = (wait * 2).min(Duration::from_secs(60));
                         if !matches!(gateway.state(source), SessionState::Authorizing) {
@@ -3512,6 +3538,7 @@ impl Worker {
                 }
                 self.engine = Some(engine);
                 self.start_rootlist();
+                self.list_waiting_playlists();
                 self.reconnects.clear();
                 self.emit(Event::Playback(LocalPlayback::Ready { device_id }));
                 self.start_album_type_lookup();
@@ -3742,6 +3769,33 @@ impl Worker {
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             let _ = commands.send(Command::VerifyResume);
+        });
+    }
+
+    /// Lists the account's playlists from the top. Asked before the
+    /// streaming session connects, the request is kept: it may be waiting on
+    /// the shared app, which the session can answer for (#698).
+    fn list_playlists(&mut self, generation: u64) {
+        let task = self.dispatch(ApiRequest::MyPlaylists {
+            offset: 0,
+            generation,
+        });
+        self.library_waiting = self.engine.is_none().then_some((generation, task));
+    }
+
+    /// The streaming session just connected: a playlist list still waiting
+    /// on the shared app is read over the session instead.
+    fn list_waiting_playlists(&mut self) {
+        let Some((generation, task)) = self.library_waiting.take() else {
+            return;
+        };
+        if task.is_finished() || !self.api.shared_waiting() {
+            return;
+        }
+        task.abort();
+        self.dispatch(ApiRequest::MyPlaylists {
+            offset: 0,
+            generation,
         });
     }
 
@@ -4556,6 +4610,18 @@ async fn handle(
         );
     }
     let operation = operation_for(api, &request);
+    // Only the shared app lists the account's playlists through the Web
+    // API. While it waits for verification or for Spotify's rate limit, the
+    // rootlist over the playback session gives the same list (#698).
+    if let ApiRequest::MyPlaylists {
+        offset: 0,
+        generation,
+    } = request
+        && api.shared_waiting()
+        && let Some(response) = library_over_session(api, engine, generation).await
+    {
+        return (response, Vec::new());
+    }
     // A session whose long-lived connection has dropped still answers over
     // its HTTP client, so the engine's presence is the only liveness test;
     // a read the session truly cannot make falls back to the Web API below.
@@ -4652,11 +4718,22 @@ async fn handle(
             result: routed!(recommendations(&seed_tracks, &seed_artists, 20)),
         },
         ApiRequest::MadeForYou { .. } => unreachable!("handled before Web API routing"),
-        ApiRequest::MyPlaylists { offset, generation } => ApiResponse::MyPlaylists {
-            offset,
-            generation,
-            result: routed!(my_playlists(offset, 50)),
-        },
+        ApiRequest::MyPlaylists { offset, generation } => {
+            let result = routed!(my_playlists(offset, 50));
+            // The rate limit can also start while the list is on its way.
+            if offset == 0
+                && matches!(result, Err(ApiError::RateLimited))
+                && let Some(response) = library_over_session(api, engine, generation).await
+            {
+                response
+            } else {
+                ApiResponse::MyPlaylists {
+                    offset,
+                    generation,
+                    result,
+                }
+            }
+        }
         ApiRequest::Playlist { id, generation } => ApiResponse::Playlist {
             result: routed!(playlist(&id)),
             id,
@@ -5153,6 +5230,44 @@ fn same_account(username: &str, account: Option<&AccountId>) -> bool {
 /// what the Web API's own requests get. A stalled line otherwise waits on
 /// the operating system, which is far longer than a page should spin.
 const SESSION_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The account's playlists from the rootlist over the playback session,
+/// as one whole page. `None` without a session for the verified account or
+/// when the read fails, leaving the Web API to answer.
+async fn library_over_session(
+    api: &ApiGateway,
+    engine: Option<&Engine>,
+    generation: u64,
+) -> Option<ApiResponse> {
+    let engine = engine
+        .filter(|engine| same_account(&engine.session().username(), api.account().as_ref()))?;
+    let items = match tokio::time::timeout(SESSION_READ_TIMEOUT, engine.library()).await {
+        Ok(Ok(items)) => items,
+        Ok(Err(error)) => {
+            log::warn!("playlist list over the session failed: {error:#}");
+            return None;
+        }
+        Err(_) => {
+            log::debug!("playlist list over the session timed out; asking the Web API");
+            return None;
+        }
+    };
+    log::debug!("Spotify route operation=PlaylistLibrary source=session");
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    let response = ApiResponse::MyPlaylists {
+        offset: 0,
+        generation,
+        result: Ok(Page {
+            items,
+            total,
+            limit: total,
+            offset: 0,
+            next: None,
+        }),
+    };
+    observe_playlists(api, &response);
+    Some(response)
+}
 
 /// Answers a playlist or popular-track read over the streaming session. `None` when the
 /// session could not, leaving the request to the Web API.

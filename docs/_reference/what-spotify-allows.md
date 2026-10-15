@@ -38,9 +38,12 @@ requests and pauses a session when Spotify sends a `Retry-After` response.
 Spotify also limits apps created since November 2024. These apps cannot access
 Spotify-owned playlists, related artists, recommendations, or audio features.
 This is why a personal app cannot handle every request. Complete playlist
-library views stay on the shared app. Playlists other people own, and every
-playlist when there is no personal app, are read over the librespot session
-while local playback is signed in. See [How It Connects](/how-it-connects/).
+library views stay on the shared app. While that app is still verifying or
+held back by Spotify's rate limit, the account's playlist list comes from the
+rootlist over the librespot session instead, when local playback is signed
+in. Playlists other people own, and every playlist when there is no personal
+app, are read over the librespot session while local playback is signed in.
+See [How It Connects](/how-it-connects/).
 
 ## librespot session
 

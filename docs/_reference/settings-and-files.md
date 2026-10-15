@@ -350,14 +350,16 @@ and `--demo-show` adds surfaces on top of it: a comma separated list of
 `collection-loading`, `shuffle-selected`, `shuffle-started`, `library-list`,
 `library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,
 `library-grid-wide`, `rtl`, `player-bar-spectrum`, `player-bar-waveform`,
-`lyrics-fullscreen-view`, `lyrics-fullscreen-instrumental`, `signed-out`, `connecting`, and `connecting-personal-app`. The Library variants show the list or cover grid with
+`lyrics-fullscreen-view`, `lyrics-fullscreen-instrumental`, `signed-out`, `connecting`, `connecting-personal-app`, and `connecting-rate-limited`. The Library variants show the list or cover grid with
 a normal, narrow, or wide sidebar and collapsed artwork for matching captures.
 `shuffle-selected` and `shuffle-started` capture the selected-mode and
 playback-started outcomes of a collection Shuffle click. `update` shows a sample
 update badge for checking its layout. `personal-app` shows the personal Spotify
 app introduction.
 `signed-out` and `connecting` show the sign-in card before and while the
-session connects; `connecting-personal-app` unfolds its personal app setup.
+session connects; `connecting-personal-app` unfolds its personal app setup,
+and `connecting-rate-limited` adds the notice shown when Spotify rate limits
+the shared app.
 `player-bar-spectrum` and `player-bar-waveform` play a fixed, music-like
 sound on this computer with that player bar visualizer on.
 `lyrics-fullscreen-view` and `lyrics-fullscreen-instrumental` draw full-screen

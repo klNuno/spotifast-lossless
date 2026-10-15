@@ -3382,6 +3382,14 @@ msgstr "Substitui a chave guardada"
 msgid "Paste the key"
 msgstr "Cola a chave"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr ""
+"O Spotify está a limitar a app partilhada neste momento, por isso isto pode "
+"demorar minutos. Com uma app pessoal inicias sessão sem esperar."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Não foi possível carregar esta secção"
 

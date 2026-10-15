@@ -3383,6 +3383,14 @@ msgstr "Kayıtlı anahtarı değiştirin"
 msgid "Paste the key"
 msgstr "Anahtarı yapıştırın"
 
+#: src/ui/login.rs:109
+msgid ""
+"Spotify is limiting the shared app right now, so this can take minutes. A "
+"personal app signs you in without waiting."
+msgstr ""
+"Spotify şu anda paylaşılan uygulamayı sınırlıyor, bu yüzden bu işlem "
+"dakikalar sürebilir. Kişisel bir uygulamayla beklemeden oturum açarsınız."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Bu bölüm yüklenemedi"
 

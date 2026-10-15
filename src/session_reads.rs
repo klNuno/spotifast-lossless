@@ -19,6 +19,7 @@ use librespot_protocol::extended_metadata::{
     BatchedEntityRequest, BatchedExtensionResponse, EntityRequest, ExtensionQuery,
 };
 use librespot_protocol::extension_kind::ExtensionKind;
+use librespot_protocol::playlist4_external::ListItems;
 use protobuf::{EnumOrUnknown, Message as _};
 
 use crate::api::ApiError;
@@ -525,8 +526,25 @@ fn total(list: &SessionPlaylist) -> u32 {
 }
 
 fn header(id: &str, list: &SessionPlaylist) -> Playlist {
-    let attributes = &list.attributes;
-    let owner = non_empty(owner_of(list));
+    listed(
+        id,
+        &list.attributes,
+        owner_of(list),
+        &list.revision,
+        total(list),
+    )
+}
+
+/// A playlist as the Web API lists it, from what Spotify says of the list
+/// itself: no songs, no owner's name.
+fn listed(
+    id: &str,
+    attributes: &PlaylistAttributes,
+    owner: &str,
+    revision: &[u8],
+    length: u32,
+) -> Playlist {
+    let owner = non_empty(owner);
     Playlist {
         id: id.to_string(),
         name: attributes.name.clone(),
@@ -539,10 +557,45 @@ fn header(id: &str, list: &SessionPlaylist) -> Playlist {
             display_name: None,
         },
         collaborative: attributes.is_collaborative,
-        snapshot_id: Some(snapshot(&list.revision)),
-        items_count: Some(TrackCount { total: total(list) }),
+        snapshot_id: Some(snapshot(revision)),
+        items_count: Some(TrackCount { total: length }),
         ..Default::default()
     }
+}
+
+/// The playlists of one rootlist page, as the Web API's list of the
+/// account's playlists gives them. Spotify decorates each row with the
+/// list's name, cover, owner, length and revision, so no playlist is read
+/// on its own. Folder markers are not playlists. A row Spotify left
+/// undecorated keeps a blank name, which the header lookup fills later.
+pub fn listed_playlists(contents: &ListItems) -> Vec<Playlist> {
+    contents
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let id = item.uri.as_deref()?.strip_prefix("spotify:playlist:")?;
+            let decorated = contents
+                .meta_items
+                .get(index)
+                .filter(|meta| meta.attributes.is_some())
+                .and_then(|meta| {
+                    let attributes = PlaylistAttributes::try_from(&*meta.attributes).ok()?;
+                    Some(listed(
+                        id,
+                        &attributes,
+                        meta.owner_username(),
+                        meta.revision(),
+                        u32::try_from(meta.length()).unwrap_or_default(),
+                    ))
+                });
+            Some(decorated.unwrap_or_else(|| Playlist {
+                id: id.to_string(),
+                uri: format!("spotify:playlist:{id}"),
+                ..Default::default()
+            }))
+        })
+        .collect()
 }
 
 /// The Web API's snapshot id is the playlist revision in base64, so a
@@ -1118,6 +1171,57 @@ mod tests {
             Some("https://mosaic.scdn.co/300/x")
         );
         assert_eq!(image_url("spotify:mosaic:x"), None);
+    }
+
+    /// The rootlist names, covers and counts every playlist itself, so the
+    /// account's list needs no read per playlist, and folders stay out.
+    #[test]
+    fn the_rootlist_lists_the_playlists_as_the_web_api_does() {
+        use librespot_protocol::playlist4_external::{Item, MetaItem};
+
+        // #given
+        let mut contents = ListItems::new();
+        for uri in [
+            "spotify:start-group:f1:Road",
+            "spotify:playlist:pl1",
+            "spotify:end-group:f1",
+            "spotify:playlist:pl2",
+        ] {
+            let mut item = Item::new();
+            item.set_uri(uri.into());
+            contents.items.push(item);
+            let mut meta = MetaItem::new();
+            if uri == "spotify:playlist:pl1" {
+                meta.set_revision(vec![0, 0, 0, 7]);
+                meta.set_length(12);
+                meta.set_owner_username("me".into());
+                let attributes = meta.attributes.mut_or_insert_default();
+                attributes.set_name("Night drive".into());
+                attributes.set_picture(vec![0xab, 0xcd]);
+            }
+            contents.meta_items.push(meta);
+        }
+
+        // #when
+        let playlists = listed_playlists(&contents);
+
+        // #then
+        let ids: Vec<&str> = playlists.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["pl1", "pl2"], "folder markers are not playlists");
+        let first = &playlists[0];
+        assert_eq!(first.name, "Night drive");
+        assert_eq!(first.uri, "spotify:playlist:pl1");
+        assert_eq!(first.owner.id.as_deref(), Some("me"));
+        assert_eq!(first.track_total(), 12);
+        assert_eq!(first.images.len(), 1);
+        assert_eq!(
+            first.snapshot_id,
+            Some(snapshot(&[0, 0, 0, 7])),
+            "the snapshot matches a header read on its own"
+        );
+        let undecorated = &playlists[1];
+        assert!(undecorated.name.is_empty(), "left for the header lookup");
+        assert_eq!(undecorated.items_count, None);
     }
 
     #[test]
