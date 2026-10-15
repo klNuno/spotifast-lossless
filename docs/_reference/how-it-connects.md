@@ -49,7 +49,8 @@ Local playback authorization stays separate from both Web API grants. Its
 browser approval requests only the streaming permission and always shows the
 consent dialog. The playback session uses the account ID verified by either
 Web API grant. A verified personal app can complete sign-in while the shared
-app's verification is still waiting. That verification keeps retrying in the
+app's verification is still waiting; the sign-in card offers its setup under
+the spinner, since Settings opens only once signed in. That verification keeps retrying in the
 background through rate limits without showing the top bar's "Waiting for
 Spotify" spinner, since nothing on screen waits for it.
 

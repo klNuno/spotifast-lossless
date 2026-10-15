@@ -64,6 +64,10 @@ const THEMES_GUIDE_URL: &str = "https://spotifast.rocks/settings-and-files/#cust
 /// Spotify's guide to creating the Soloist client key lossless playback needs.
 const SOLOIST_KEY_GUIDE_URL: &str =
     "https://developer.spotify.com/documentation/soloist/tutorials/getting-started";
+/// The guide to creating a personal Spotify app, also offered on the sign-in
+/// card.
+pub(crate) const PERSONAL_APP_GUIDE_URL: &str =
+    "https://spotifast.rocks/make-it-even-faster/#make-a-spotify-app";
 
 fn section_matches(needle: &str, title: &str, rows: &[RowText<'_>]) -> bool {
     let needle = needle.trim().to_lowercase();
@@ -445,9 +449,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 if theme::pill_button(ui, &palette, &gettext(locale, "Setup guide"), false)
                     .clicked()
                 {
-                    app.actions.push(Action::OpenUrl(
-                        "https://spotifast.rocks/make-it-even-faster/#make-a-spotify-app".into(),
-                    ));
+                    app.actions
+                        .push(Action::OpenUrl(PERSONAL_APP_GUIDE_URL.into()));
                 }
             });
             if in_use {

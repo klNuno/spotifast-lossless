@@ -87,3 +87,8 @@ through its music connection instead.
 
 Your playback setup stays the same. Select **Remove** to stop using your
 personal connection and return to shared access.
+
+When the shared connection is busy, signing in can stay on **Connecting to
+Spotify…** for minutes, since it waits for Spotify to name your account. Choose
+**Personal Spotify app** under the spinner, paste the Client ID and click
+**Authorize**: your app names the account and Spotifast opens.

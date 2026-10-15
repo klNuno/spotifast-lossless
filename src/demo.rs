@@ -904,6 +904,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 app.auth = AuthStatus::Connecting;
                 app.user = None;
             }
+            "connecting-personal-app" => {
+                app.auth = AuthStatus::Connecting;
+                app.user = None;
+                app.login_personal_app = true;
+            }
             "recents" => {
                 app.show_queue_panel = true;
                 app.queue_tab = QueueTab::Recents;

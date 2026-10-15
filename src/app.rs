@@ -271,6 +271,8 @@ pub struct App {
     proxy_request: u64,
     last_proxy_applied: u64,
     proxy_form_edited: bool,
+    /// The sign-in card's personal app setup is unfolded.
+    pub login_personal_app: bool,
     settings_dirty: bool,
     last_settings_save: Instant,
     pub backend: Backend,
@@ -884,6 +886,7 @@ impl App {
             proxy_request: 0,
             last_proxy_applied: 0,
             proxy_form_edited: false,
+            login_personal_app: false,
             settings_dirty: false,
             last_settings_save: Instant::now(),
             backend,

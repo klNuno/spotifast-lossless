@@ -42,6 +42,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
             } else {
                 500.0
             };
+            // Room for the personal app setup unfolded under the spinner.
+            let card_height = card_height + if connecting && app.login_personal_app { 190.0 } else { 0.0 };
             let card_height = card_height.min((rect.height() - 64.0).max(0.0));
             let card = Rect::from_center_size(
                 rect.center() - Vec2::new(0.0, 20.0),
@@ -96,6 +98,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                                 theme::spinner(ui, 18.0, palette.accent);
                                 theme::text(ui, gettext(locale, "Connecting to Spotify…"), theme::medium(14.0), palette.text);
                             });
+                            personal_app(ui, app);
                         }
                         AuthStatus::Failed(message) => {
                             let message = message.clone();
@@ -262,6 +265,102 @@ fn proxy_fields(ui: &mut egui::Ui, app: &mut App) {
     }
 }
 
+/// Signing in waits for the shared app to name the account, and Spotify can
+/// refuse the shared app for as long as its listeners use up the quota they
+/// share. A verified personal app completes sign-in on its own, and Settings
+/// opens only once signed in, so its setup stands here too.
+fn personal_app(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    ui.add_space(10.0);
+    let unfolded = theme::link(
+        ui,
+        gettext(locale, "Personal Spotify app"),
+        theme::regular(13.0),
+        palette.secondary,
+    )
+    .clicked();
+    if unfolded {
+        app.login_personal_app = !app.login_personal_app;
+    }
+    if !app.login_personal_app {
+        return;
+    }
+    ui.add_space(6.0);
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(gettext(
+                locale,
+                "Use a personal Development Mode app for a separate API quota. The shared app stays active.",
+            ))
+            .font(theme::regular(12.5))
+            .color(palette.secondary),
+        )
+        .wrap(),
+    );
+    ui.add_space(8.0);
+    let mut client_id = app.settings.web_client_id.clone().unwrap_or_default();
+    let response = Frame::new()
+        .fill(palette.surface)
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            super::widgets::text_edit(
+                ui,
+                locale,
+                egui::TextEdit::singleline(&mut client_id)
+                    .id(egui::Id::new("login-personal-client-id"))
+                    .hint_text(egui::RichText::new(gettext(locale, "Client ID")).color(palette.dim))
+                    .font(theme::regular(13.0))
+                    .frame(egui::Frame::NONE)
+                    .desired_width(f32::INFINITY),
+            )
+        })
+        .inner;
+    if response.changed() {
+        let trimmed = client_id.trim().to_string();
+        app.settings.web_client_id = (!trimmed.is_empty()).then_some(trimmed);
+        app.mark_settings_dirty();
+    }
+    ui.add_space(10.0);
+    let guide = gettext(locale, "Setup guide");
+    let authorize = gettext(locale, "Authorize");
+    let row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let width: f32 = [&guide, &authorize]
+            .iter()
+            .map(|label| {
+                ui.painter()
+                    .layout_no_wrap(label.to_string(), theme::semibold(13.0), palette.text)
+                    .size()
+                    .x
+                    + 36.0
+            })
+            .sum::<f32>()
+            + 8.0;
+        ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
+        if theme::pill_button(ui, &palette, &guide, false).clicked() {
+            app.actions.push(Action::OpenUrl(
+                super::settings::PERSONAL_APP_GUIDE_URL.into(),
+            ));
+        }
+        let ready = app.settings.web_client_id.is_some();
+        if ui
+            .add_enabled_ui(ready, |ui| {
+                theme::pill_button(ui, &palette, &authorize, true)
+            })
+            .inner
+            .clicked()
+        {
+            app.actions.push(Action::ConfigurePersonalWebApp);
+        }
+    });
+    // A short window clips the card: bring what just unfolded into view.
+    if unfolded {
+        ui.scroll_to_rect(row.response.rect, None);
+    }
+}
+
 fn big_button(ui: &mut egui::Ui, app: &App, label: &str) -> bool {
     let palette = app.palette;
     let galley =
@@ -378,5 +477,113 @@ mod tests {
             visible_button(&frame(vec![]), "Apply settings"),
             "scrolling must reach Apply above the footer"
         );
+    }
+
+    /// Spotify can refuse the shared app for minutes while sign-in waits for
+    /// it to name the account. The waiting card unfolds a personal app setup
+    /// whose Authorize starts that app's sign-in, in a short window too.
+    #[test]
+    fn a_waiting_sign_in_offers_a_personal_app() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        theme::install(&ctx);
+        let root = std::env::temp_dir().join(format!(
+            "spotifast-personal-app-login-{}",
+            std::process::id()
+        ));
+        let mut app = App::new(
+            &Waker::default(),
+            AppDirs {
+                config: root.join("config"),
+                state: root.join("state"),
+                cache: root.join("cache"),
+            },
+            Settings {
+                web_client_id: Some("personal-client".into()),
+                ..Default::default()
+            },
+            AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+            },
+        );
+        app.auth = AuthStatus::Connecting;
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(760.0, 520.0));
+        let frame = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui, true),
+            );
+            output.textures_delta.clear();
+            output.platform_output.accesskit_update.unwrap()
+        };
+        let bounds = |tree: &egui::accesskit::TreeUpdate, label: &str| {
+            tree.nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .map(|(_, node)| node.bounds().unwrap())
+        };
+        let click = |at: egui::Pos2| {
+            [true, false].map(|pressed| {
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            })
+        };
+        let center = |rect: egui::accesskit::Rect| {
+            egui::pos2(
+                ((rect.x0 + rect.x1) / 2.0) as f32,
+                ((rect.y0 + rect.y1) / 2.0) as f32,
+            )
+        };
+
+        let first = frame(&mut app, vec![]);
+        assert!(
+            bounds(&first, "Authorize").is_none(),
+            "the setup starts folded"
+        );
+        let link =
+            bounds(&first, "Personal Spotify app").expect("the waiting card offers a personal app");
+        for events in click(center(link)) {
+            frame(&mut app, events);
+        }
+        assert!(app.login_personal_app);
+        for _ in 0..30 {
+            frame(&mut app, vec![]);
+        }
+        let open = frame(&mut app, vec![]);
+        let authorize = bounds(&open, "Authorize").expect("the unfolded setup offers Authorize");
+        assert!(
+            authorize.y0 >= 0.0 && authorize.y1 <= 480.0,
+            "unfolding scrolls Authorize into view above the footer"
+        );
+        let guide = bounds(&open, "Setup guide").unwrap();
+        let row = (guide.x0 + authorize.x1) / 2.0;
+        assert!(
+            (row - 380.0).abs() < 2.0,
+            "the buttons stay centered under the spinner"
+        );
+        assert!(app.actions.is_empty());
+        for events in click(center(authorize)) {
+            frame(&mut app, events);
+        }
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::ConfigurePersonalWebApp)),
+            "Authorize starts the personal app's sign-in"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }
