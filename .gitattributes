@@ -2,3 +2,4 @@
 # Scripts that run inside Linux, embedded or shipped as they are checked out.
 soloist/vm/init text eol=lf
 soloist/**/*.sh text eol=lf
+soloist/**/*.config text eol=lf

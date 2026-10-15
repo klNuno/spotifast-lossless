@@ -1,7 +1,8 @@
 //! Soloist on Windows, in a small Linux machine of Spotifast's own.
 //!
 //! Spotify publishes Soloist for Linux only. Spotifast ships QEMU, a Linux
-//! kernel and a minimal user space (busybox and glibc from Debian, built by
+//! kernel with only what the machine uses (`soloist/vm/build-kernel.sh`) and
+//! a minimal user space (busybox and glibc from Debian, built by
 //! `soloist/vm/build-bundle.sh`) and runs Soloist in a machine with one
 //! processor, a little memory and QEMU's private user network. It needs no
 //! administrator, no Windows feature and no restart: QEMU runs the machine
