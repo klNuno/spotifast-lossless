@@ -320,6 +320,7 @@ fn local_receiver(port: u16) -> crate::zeroconf::Receiver {
         address: std::net::Ipv4Addr::LOCALHOST.into(),
         port,
         path: "/zc".into(),
+        cast: false,
     }
 }
 
