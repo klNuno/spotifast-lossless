@@ -1970,3 +1970,49 @@ mod tests {
         assert_eq!(Heard::at(set_here).level(), set_here);
     }
 }
+
+/// What classic playback costs, to compare with Soloist's lab
+/// (`soloist::lab`): librespot's own decoder reading a local Vorbis file
+/// (`DECODE_LAB_FILE`) into a silent output paced like a device, for
+/// `DECODE_LAB_SECS`. Nothing is heard.
+///
+/// `cargo test --lib player::lab -- --ignored --nocapture`
+#[cfg(all(test, target_arch = "x86_64", any(target_os = "linux", windows)))]
+mod lab {
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+    use crate::soloist::lab::{Heard, silent};
+
+    #[test]
+    #[ignore = "needs a Vorbis file"]
+    fn decodes_like_librespot() {
+        use librespot_playback::convert::Converter;
+        use librespot_playback::decoder::{AudioDecoder, SymphoniaDecoder};
+        let file = std::fs::File::open(std::env::var("DECODE_LAB_FILE").expect("DECODE_LAB_FILE"))
+            .unwrap();
+        let secs: u64 = std::env::var("DECODE_LAB_SECS").map_or(60, |secs| secs.parse().unwrap());
+        let mut decoder = SymphoniaDecoder::new(file, Default::default()).unwrap();
+        let heard = Arc::new(Heard::default());
+        let mut sink = silent(&heard)();
+        let mut converter = Converter::new(None);
+        sink.start().unwrap();
+        let started = Instant::now();
+        eprintln!("lab: logged in");
+        let mut said = false;
+        while started.elapsed() < Duration::from_secs(secs) {
+            let Some((_, packet)) = decoder.next_packet().unwrap() else {
+                break;
+            };
+            sink.write(packet, &mut converter).unwrap();
+            if !said && heard.frames.load(Ordering::Relaxed) > 3 * 44_100 {
+                eprintln!("lab: three seconds of audio");
+                said = true;
+            }
+        }
+        eprintln!(
+            "lab: {} frames decoded",
+            heard.frames.load(Ordering::Relaxed)
+        );
+    }
+}

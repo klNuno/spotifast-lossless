@@ -452,7 +452,7 @@ fn prepare(_: &Path, _: &crate::settings::ProxyConfig) -> Result<Prepared> {
 ///
 /// `cargo test --lib soloist::lab -- --ignored --nocapture`
 #[cfg(all(test, target_arch = "x86_64", any(target_os = "linux", windows)))]
-mod lab {
+pub(crate) mod lab {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
@@ -465,16 +465,22 @@ mod lab {
     use crate::player::{EngineEvent, LocalState, Playback};
 
     #[derive(Default)]
-    struct Heard {
-        frames: AtomicU64,
+    pub(crate) struct Heard {
+        pub(crate) frames: AtomicU64,
         /// The loudest sample, as `f64` bits.
-        peak: AtomicU64,
+        pub(crate) peak: AtomicU64,
     }
 
     /// Takes audio as fast as a 44.1 kHz device would, and keeps nothing.
     struct Silent {
         heard: Arc<Heard>,
         clock: Option<(Instant, u64)>,
+    }
+
+    /// A silent output that counts what it is given in `heard`.
+    pub(crate) fn silent(heard: &Arc<Heard>) -> SinkBuilder {
+        let heard = Arc::clone(heard);
+        Box::new(move || Box::new(Silent { heard, clock: None }) as Box<dyn Sink>)
     }
 
     impl Sink for Silent {
@@ -513,7 +519,7 @@ mod lab {
     }
 
     /// Prints Spotifast's own log, with the client key masked.
-    struct Redacted(String);
+    pub(crate) struct Redacted(pub(crate) String);
 
     impl log::Log for Redacted {
         fn enabled(&self, metadata: &log::Metadata) -> bool {
@@ -530,7 +536,7 @@ mod lab {
         fn flush(&self) {}
     }
 
-    async fn until(what: &str, seconds: u64, mut done: impl FnMut() -> bool) {
+    pub(crate) async fn until(what: &str, seconds: u64, mut done: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(seconds);
         while !done() {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
@@ -562,10 +568,7 @@ mod lab {
         }));
         let heard = Arc::new(Heard::default());
         let mixer = mixer::find(Some("softvol")).unwrap()(MixerConfig::default()).unwrap();
-        let sink: SinkBuilder = {
-            let heard = Arc::clone(&heard);
-            Box::new(move || Box::new(Silent { heard, clock: None }) as Box<dyn Sink>)
-        };
+        let sink = silent(&heard);
         let notify: crate::player::Notify = Arc::new(|event| {
             if let EngineEvent::State(state) = event {
                 log::trace!("lab: {:?} {:?}", state.playback, state.position_ms);
