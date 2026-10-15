@@ -451,6 +451,113 @@ impl Drop for Job {
     }
 }
 
+/// How often Spotifast looks at the machine's memory, in milliseconds.
+const TRIM_CHECK_MS: u32 = 30_000;
+/// Growth of the machine's memory since it settled after the last trim that
+/// has it trimmed again.
+const TRIM_GROWTH: usize = 32 << 20;
+
+/// Hands the memory the machine no longer uses back to Windows while it runs.
+///
+/// Most of what the machine touches once is not touched again: Linux's and
+/// Soloist's start, the copies QEMU keeps of the kernel and the first file
+/// system. Windows leaves all of it resident until memory runs short, about
+/// 120 MB. Emptying QEMU's working set 30 s after the start leaves what the
+/// machine still uses, 25 MB idle and 50 MB playing: those pages come back
+/// from Windows' standby list on their next access, under 0.2 s of one core
+/// in all. It is emptied again only once it has grown by [`TRIM_GROWTH`].
+pub(crate) fn trim_memory(child: &std::process::Child) {
+    use std::os::windows::io::{AsHandle, AsRawHandle};
+    use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+    use windows_sys::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    let qemu = match child.as_handle().try_clone_to_owned() {
+        Ok(handle) => handle,
+        Err(error) => {
+            log::debug!("soloist: cannot watch the machine's memory: {error}");
+            return;
+        }
+    };
+    let spawned = std::thread::Builder::new()
+        .name("soloist-memory".into())
+        .spawn(move || {
+            let mut policy = TrimPolicy::default();
+            // SAFETY: the handle stays open for the thread's life; the wait
+            // ends when QEMU does.
+            while unsafe { WaitForSingleObject(qemu.as_raw_handle(), TRIM_CHECK_MS) }
+                == WAIT_TIMEOUT
+            {
+                let Some(now) = working_set(&qemu) else {
+                    return;
+                };
+                if !policy.trim(now) {
+                    continue;
+                }
+                // SAFETY: as above.
+                if unsafe { K32EmptyWorkingSet(qemu.as_raw_handle()) } == 0 {
+                    log::debug!(
+                        "soloist: cannot trim the machine's memory: {}",
+                        io::Error::last_os_error()
+                    );
+                    return;
+                }
+                log::debug!("soloist: trimmed the machine from {} MB", now >> 20);
+            }
+        });
+    if let Err(error) = spawned {
+        log::debug!("soloist: cannot watch the machine's memory: {error}");
+    }
+}
+
+/// When [`trim_memory`] empties the machine's working set, checked every
+/// [`TRIM_CHECK_MS`].
+#[derive(Debug)]
+struct TrimPolicy {
+    /// What the machine kept one check after its last trim; None right after
+    /// one.
+    settled: Option<usize>,
+}
+
+impl Default for TrimPolicy {
+    /// The first check trims what the start left behind.
+    fn default() -> Self {
+        Self { settled: Some(0) }
+    }
+}
+
+impl TrimPolicy {
+    /// Whether to trim, now that the machine holds `now` bytes.
+    fn trim(&mut self, now: usize) -> bool {
+        match self.settled {
+            Some(base) if now > base + TRIM_GROWTH => {
+                self.settled = None;
+                true
+            }
+            Some(_) => false,
+            None => {
+                self.settled = Some(now);
+                false
+            }
+        }
+    }
+}
+
+/// The process's working set in bytes.
+fn working_set(process: &std::os::windows::io::OwnedHandle) -> Option<usize> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    // SAFETY: all-zero is a valid value for this plain C structure.
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&counters) as u32;
+    // SAFETY: the structure outlives the call and its size is given; the
+    // handle is open.
+    let ok = unsafe { K32GetProcessMemoryInfo(process.as_raw_handle(), &raw mut counters, size) };
+    (ok != 0).then_some(counters.WorkingSetSize)
+}
+
 /// The PEM bundle Soloist reads: Mozilla's roots, which Linux distributions
 /// ship, and whatever else Windows trusts (a company's own authority, a
 /// proxy's). Windows alone is not enough: it downloads most roots only when
@@ -489,6 +596,19 @@ mod tests {
         let count = pem.matches("-----BEGIN CERTIFICATE-----").count();
         assert!(count >= webpki_root_certs::TLS_SERVER_ROOT_CERTS.len());
         assert_eq!(count, pem.matches("-----END CERTIFICATE-----").count());
+    }
+
+    #[test]
+    fn trims_after_the_start_then_only_on_growth() {
+        const MB: usize = 1 << 20;
+        let mut policy = TrimPolicy::default();
+        assert!(policy.trim(118 * MB), "the first check trims the start");
+        assert!(!policy.trim(30 * MB), "the next one settles");
+        assert!(!policy.trim(55 * MB));
+        assert!(!policy.trim(62 * MB));
+        assert!(policy.trim(63 * MB), "32 MB past what it settled at");
+        assert!(!policy.trim(40 * MB));
+        assert!(!policy.trim(71 * MB));
     }
 
     #[test]

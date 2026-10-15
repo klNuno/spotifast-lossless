@@ -154,6 +154,10 @@ pub(crate) fn spawn(
             None
         }
     };
+    #[cfg(windows)]
+    if forwarded.is_some() {
+        super::vm::trim_memory(&child);
+    }
     let input = Arc::new(Mutex::new(child.stdin.take()));
     let (reports, received) = mpsc::unbounded_channel();
     let mut output = Output {

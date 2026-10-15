@@ -79,6 +79,11 @@ done </etc/soloist.args
 while IFS= read -r setting; do
     export "${setting?}"
 done </etc/soloist.env
+# Soloist reads every track through its cache once, and Linux would keep
+# each page it read, about 15 MB a minute while playing, until the machine's
+# memory is full. Dropping the clean cache every 10 s keeps it to what Soloist
+# has mapped, its code.
+( while sleep 10; do echo 1 >/proc/sys/vm/drop_caches; done ) &
 # Soloist's threads wake on short timers, and every wakeup is costly in an
 # emulated machine. Letting the kernel group them within 100 ms leaves about
 # 25 timer interrupts a second at idle and 40 while playing, half of what
