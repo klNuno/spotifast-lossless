@@ -38,54 +38,54 @@ egui_extras = { version = "0.36", features = ["image", "svg"] }
 # The shared foundation of Spotifast, ZapFast, RekordFlash and TonePush
 # (crmne/fastframe). Every crate comes from the same revision; move them
 # together. Dock icons and badges share the same foundation as the tray.
-fastframe-text = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
-fastframe-fonts = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
-fastframe-icons = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
-fastframe-theme = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-text = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
+fastframe-fonts = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
+fastframe-icons = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
+fastframe-theme = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # Colour emoji in the platform's own style (Apple Color Emoji, Segoe UI
 # Emoji, the desktop's colour emoji font), in every text through its egui
 # plugin.
-fastframe-emoji = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-emoji = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # Catalogs compiled from PO files at build time (see build.rs) and the
 # system's preferred languages. No libintl or runtime catalog parsing.
-fastframe-i18n = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-i18n = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # The log file for bug reports and the panic log (env_logger underneath).
-fastframe-log = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-log = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # The tray item, so closing the window can keep the music playing:
 # StatusNotifier on Linux, the notification area on Windows, the menu bar
 # on macOS.
-fastframe-tray = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-tray = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # Keeps the app running without a window around eframe::run_native.
-fastframe-shell = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-shell = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # The title bar the app draws itself: the header drag and double-click on
 # every platform, and on Windows and Linux the caption buttons and resizable
 # edges when the listener turns the platform's frame off.
-fastframe-titlebar = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-titlebar = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # Self-update from GitHub releases, on the reqwest client below.
-fastframe-update = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae", features = ["reqwest"] }
+fastframe-update = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5", features = ["reqwest"] }
 # Settings, the session, the history, caches and the credential markers
 # are replaced whole: a temporary file beside each, synced to the disk, then
 # moved over it (written through on Windows), so a crash never leaves half.
-fastframe-file = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-file = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # The device's power, session and network state: energy saver, battery,
 # display, lock, the internet's reach and cost, sleep and wake, and the App
 # Nap activity local playback holds on macOS.
-fastframe-power = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-power = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # The audio device stream: it pauses, so a paused player costs no CPU (#636),
 # follows the default output and reopens after a failure. Its cpal 0.18
 # cannot share a build with the cpal 0.16 of librespot's rodio backend (both
 # link ALSA), so that backend is left out.
-fastframe-audio = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-audio = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # The wheel step, the Linux touchpad scale and glide, and the axis a scroll
 # gesture holds.
-fastframe-scroll = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-scroll = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # One running copy per user: a lock and a private channel that a second
 # launch and the command line hand their requests to.
-fastframe-instance = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-instance = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # The desktop's media controls: MPRIS on Linux, the media overlay on
 # Windows, Now Playing on macOS. The media keys and those panels send
 # commands back, and closing the window keeps the music playing.
-fastframe-now-playing = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-now-playing = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 # Reading installed fonts for MilkDrop's overlays, the Winamp playlist's
 # pixel text, and the playlist face. skrifa is the parser epaint already
 # rasterizes with, and the version has to track epaint's or the binary
@@ -185,7 +185,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The packaged Dock artwork also identifies unbundled Cargo runs.
-fastframe-dock = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae" }
+fastframe-dock = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5" }
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # The application menus and Dock menu (src/mac_menu.rs). "exception" lets
 # src/mac_touchbar_crash_guard.rs catch a specific AppKit Objective-C
@@ -230,7 +230,7 @@ x11rb = { version = "0.13", default-features = false }
 [build-dependencies]
 # Drops unfinished PO entries and compiles catalog text and gettext plural
 # expressions to Rust. Ordinary builds do not need gettext tools.
-fastframe-i18n = { git = "https://github.com/crmne/fastframe", rev = "97ceedda528f5c8f688ff37d001cbaf0a1d930ae", features = ["build"] }
+fastframe-i18n = { git = "https://github.com/crmne/fastframe", rev = "3339a8bc524a51c47f87ca78c368dde3569d90f5", features = ["build"] }
 
 [dev-dependencies]
 # Checks that every catalog covers the template and keeps its placeholders.
@@ -301,13 +301,14 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "ba6790fe7
 # through close requests behind a feature Spotifast leaves off (winit#4692),
 # a macOS window ordered out and flushed before it closes, so a Touch Bar
 # cannot leave a ghost window behind (winit#4728), preserving the menu-bar
-# window when the event loop exits (winit#4754), and file drag and drop on
+# window when the event loop exits (winit#4754), starting the event loop after
+# a background tray has already launched AppKit (winit#4770), and file drag and drop on
 # Wayland through the one data device egui's
 # clipboard also uses, since Hyprland gives the clipboard and drags only to an
 # app's first data device (#614). eframe from the fork above calls the
 # Occluded API and shares that device. Move both forks together with the
 # other apps.
-winit = { git = "https://github.com/crmne/winit", rev = "63c7c72ae6dc81520f04a2c5d996665f3c9ba4fd" }
+winit = { git = "https://github.com/crmne/winit", rev = "0bed9dc0a7db02590a279fb8bac795fa39ee6948" }
 # projectm-sys 1.2.2 hardcodes the Visual Studio 17 2022 CMake generator,
 # which GitHub's windows-latest images no longer carry; the fork lets an
 # explicit CMAKE_GENERATOR win, and asks vcpkg for the target's architecture
