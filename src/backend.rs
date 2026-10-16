@@ -4849,6 +4849,15 @@ async fn handle(
         );
     }
     let operation = operation_for(api, &request);
+    // While this computer plays, Spirc holds the queue it sends Spotify,
+    // which the Web API's queue only reads back. Reading it here costs no
+    // request and stays current while the shared app is rate limited.
+    if let ApiRequest::Queue { seq } = request
+        && let Some(engine) = engine
+        && let Some(response) = queue_over_session(engine, seq).await
+    {
+        return (response, Vec::new());
+    }
     // Only the shared app lists the account's playlists through the Web
     // API. While it waits for verification or for Spotify's rate limit, the
     // rootlist over the playback session gives the same list (#698).
@@ -5469,6 +5478,108 @@ fn same_account(username: &str, account: Option<&AccountId>) -> bool {
 /// what the Web API's own requests get. A stalled line otherwise waits on
 /// the operating system, which is far longer than a page should spin.
 const SESSION_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The Web API's queue holds at most this many songs after the playing one.
+const QUEUE_ROWS: usize = 20;
+
+/// This computer's queue from its own Connect state, with the songs'
+/// details read over the playback session. `None` while another device
+/// plays or when the details cannot be read, leaving the Web API to answer.
+async fn queue_over_session(engine: &Engine, seq: u64) -> Option<ApiResponse> {
+    let queue = engine.connect_queue()?;
+    let uris: Vec<String> = queue
+        .playing
+        .iter()
+        .chain(queue.next.iter().take(QUEUE_ROWS))
+        .cloned()
+        .collect();
+    let read = session_reads::playables(engine.session(), &uris);
+    let found = match tokio::time::timeout(SESSION_READ_TIMEOUT, read).await {
+        Ok(Ok(found)) => found,
+        Ok(Err(session_reads::Failure::Definitive(error))) => {
+            log::debug!("queue details over the session were refused: {error}");
+            return None;
+        }
+        Ok(Err(session_reads::Failure::Retry(error))) => {
+            log::debug!("queue details over the session failed: {error:#}");
+            return None;
+        }
+        Err(_) => {
+            log::debug!("queue details over the session timed out; asking the Web API");
+            return None;
+        }
+    };
+    log::debug!("Spotify route operation=Queue source=session");
+    Some(ApiResponse::Queue {
+        seq,
+        result: Ok(queue_of(&queue, &found)),
+    })
+}
+
+/// The queue as the Web API shows it, from the URIs Connect holds and the
+/// details found for them. A song without details is left out, as the Web
+/// API leaves out a song Spotify no longer has.
+fn queue_of(
+    queue: &crate::player::ConnectQueue,
+    found: &std::collections::HashMap<String, PlayableItem>,
+) -> Queue {
+    Queue {
+        currently_playing: queue
+            .playing
+            .as_ref()
+            .and_then(|uri| found.get(uri))
+            .cloned(),
+        queue: queue
+            .next
+            .iter()
+            .take(QUEUE_ROWS)
+            .filter_map(|uri| found.get(uri).cloned())
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod connect_queue_tests {
+    use super::*;
+
+    fn song(uri: &str) -> PlayableItem {
+        PlayableItem::Track(Track {
+            uri: uri.into(),
+            ..Default::default()
+        })
+    }
+
+    /// The local queue reads like the Web API's: the playing song, then at
+    /// most twenty more in Connect's order, without songs Spotify had no
+    /// details for.
+    #[test]
+    fn the_local_queue_reads_like_the_web_apis() {
+        let next: Vec<String> = (0..30).map(|n| format!("spotify:track:{n}")).collect();
+        let queue = crate::player::ConnectQueue {
+            playing: Some("spotify:track:now".into()),
+            next: next.clone(),
+        };
+        let mut found: std::collections::HashMap<String, PlayableItem> = next
+            .iter()
+            .chain(std::iter::once(&"spotify:track:now".to_string()))
+            .map(|uri| (uri.clone(), song(uri)))
+            .collect();
+        found.remove("spotify:track:3");
+
+        let shown = queue_of(&queue, &found);
+
+        assert_eq!(
+            shown.currently_playing.as_ref().map(PlayableItem::uri),
+            Some("spotify:track:now")
+        );
+        let uris: Vec<&str> = shown.queue.iter().map(PlayableItem::uri).collect();
+        let expected: Vec<String> = (0..20)
+            .filter(|n| *n != 3)
+            .map(|n| format!("spotify:track:{n}"))
+            .collect();
+        assert_eq!(uris, expected);
+    }
+}
 
 /// The account's playlists from the rootlist over the playback session,
 /// as one whole page. `None` without a session for the verified account or

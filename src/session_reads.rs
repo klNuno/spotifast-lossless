@@ -711,6 +711,19 @@ fn local_track(id: &SpotifyUri, uri: String) -> Option<PlayableItem> {
     }))
 }
 
+/// The songs and episodes of a queue by URI, in one batched request. A URI
+/// that does not parse, or that Spotify has no item for, is left out.
+pub async fn playables(
+    session: &Session,
+    uris: &[String],
+) -> Result<HashMap<String, PlayableItem>, Failure> {
+    let parsed: Vec<SpotifyUri> = uris
+        .iter()
+        .filter_map(|uri| SpotifyUri::from_uri(uri).ok())
+        .collect();
+    metadata(session, parsed.iter()).await
+}
+
 /// Track and episode details for the given URIs, in one batched request.
 /// A URI Spotify says it has no item for is absent, as the Web API leaves
 /// such a row's item empty. An answer Spotify could not give, or one this

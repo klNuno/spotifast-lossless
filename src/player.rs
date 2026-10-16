@@ -256,6 +256,42 @@ pub struct LoadSpec {
     pub autoplay: bool,
 }
 
+/// The playing song and the songs after it, by URI, as this device's
+/// Connect state holds them: queued songs first, then the context.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ConnectQueue {
+    pub playing: Option<String>,
+    pub next: Vec<String>,
+}
+
+impl ConnectQueue {
+    /// Only songs and episodes a listener would see: not librespot's
+    /// context delimiter, a song it found unavailable, or a hidden row.
+    fn of(state: &librespot_protocol::player::PlayerState) -> Self {
+        let shown = |track: &&librespot_protocol::player::ProvidedTrack| {
+            (track.uri.starts_with("spotify:track:") || track.uri.starts_with("spotify:episode:"))
+                && track.provider != "unavailable"
+                && track
+                    .metadata
+                    .get("hidden")
+                    .is_none_or(|hidden| hidden != "true")
+        };
+        Self {
+            playing: state
+                .track
+                .as_ref()
+                .filter(shown)
+                .map(|track| track.uri.clone()),
+            next: state
+                .next_tracks
+                .iter()
+                .filter(shown)
+                .map(|track| track.uri.clone())
+                .collect(),
+        }
+    }
+}
+
 /// A dropped Connect session retains its complete playback state. Live
 /// replacement for an audio-settings change still uses a track pickup.
 #[derive(Clone, Debug)]
@@ -704,6 +740,30 @@ impl Engine {
                 self.session.shutdown();
             }
         }
+    }
+
+    /// What this computer plays and plays next, as Spirc last published it:
+    /// the state it sends Spotify's Connect cluster, which the Web API's
+    /// queue only reads back. `None` while another device plays, or under
+    /// Soloist, whose queue lives on its own device.
+    pub fn connect_queue(&self) -> Option<ConnectQueue> {
+        let Driver::Librespot { spirc, .. } = &self.driver else {
+            return None;
+        };
+        let playing_here = spirc
+            .watch_cluster_state()
+            .borrow()
+            .active_device_id
+            .as_deref()
+            == Some(self.device_id.as_str());
+        if !playing_here {
+            return None;
+        }
+        spirc
+            .watch_player_state()
+            .borrow()
+            .as_ref()
+            .map(ConnectQueue::of)
     }
 
     pub fn resume_point(&self) -> Option<PlaybackResume> {
@@ -1455,6 +1515,46 @@ mod tests {
             .context_options(RepeatMode::Context),
             LoadContextOptions::Autoplay
         ));
+    }
+
+    /// The queue shows what Connect will play, queued songs first, and
+    /// leaves out what no listener sees: the delimiter librespot ends a
+    /// context with, a song found unavailable, a hidden row.
+    #[test]
+    fn the_connect_queue_lists_what_plays_next() {
+        use librespot_protocol::player::{PlayerState, ProvidedTrack};
+
+        let track = |uri: &str, provider: &str| ProvidedTrack {
+            uri: uri.into(),
+            provider: provider.into(),
+            ..Default::default()
+        };
+        let mut hidden = track("spotify:track:hidden", "context");
+        hidden.metadata.insert("hidden".into(), "true".into());
+        let state = PlayerState {
+            track: Some(track("spotify:track:now", "context")).into(),
+            next_tracks: vec![
+                track("spotify:track:queued", "queue"),
+                track("spotify:track:lamano", "unavailable"),
+                hidden,
+                track("spotify:episode:talk", "context"),
+                track("spotify:track:after", "context"),
+                track("spotify:delimiter", "context"),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            ConnectQueue::of(&state),
+            ConnectQueue {
+                playing: Some("spotify:track:now".into()),
+                next: vec![
+                    "spotify:track:queued".into(),
+                    "spotify:episode:talk".into(),
+                    "spotify:track:after".into(),
+                ],
+            }
+        );
     }
 
     #[test]
