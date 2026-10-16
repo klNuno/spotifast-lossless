@@ -760,7 +760,6 @@ fn tray_config() -> fastframe_tray::Config {
         icon: util::app_icon_rgba,
         template_icon: Some(util::tray_template_rgba),
         themed_icon: true,
-        menu_on_click: false,
         menu: vec![
             MenuItem::action(TRAY_SHOW, "Show or hide Spotifast"),
             MenuItem::Separator,

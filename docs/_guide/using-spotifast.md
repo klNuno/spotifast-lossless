@@ -436,7 +436,11 @@ on no screen is not used. Positions on connected secondary displays still
 restore. Reinstalling preserves settings; it is not needed to recover a
 position left on an unplugged display.
 
-## macOS Dock menu
+## macOS menu bar and Dock menu
+
+Click Spotifast's menu-bar icon to open its menu. From there you can show or
+hide the window, control playback, or quit Spotifast. The menu opens from
+either a primary or secondary click, as other macOS menu-bar items do.
 
 Right-click or Control-click Spotifast's Dock icon for **Play** (or **Pause**
 while music plays), **Next**, and **Previous**, above the standard Dock items.
