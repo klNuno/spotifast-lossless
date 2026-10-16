@@ -1282,13 +1282,18 @@ fn marquee_pixels(app: &mut App, view: &mut View, text: &str, offset: usize) {
 
 /// The bitrate and sample rate, as far as they are known: the bitrate is
 /// the one chosen for this computer, so a device across the room shows
-/// none.
+/// none, and lossless shows FLC once the samples prove it.
 fn rates(app: &App, view: &mut View, now: Option<&NowPlaying>) {
     let Some(now) = now.filter(|now| !stopped(Some(now))) else {
         return;
     };
     if now.local {
-        view.text(&format!("{:>3}", app.settings.bitrate), layout::KBPS);
+        let rate = if app.local.lossless {
+            "FLC".to_owned()
+        } else {
+            format!("{:>3}", app.settings.bitrate)
+        };
+        view.text(&rate, layout::KBPS);
     }
     view.text("44", layout::KHZ);
 }

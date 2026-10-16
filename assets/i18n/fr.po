@@ -3372,8 +3372,8 @@ msgid "Soloist key removed"
 msgstr "Clé Soloist retirée"
 
 #: src/ui/settings.rs:458
-msgid "Lossless playback"
-msgstr "Lecture sans perte"
+msgid "Lossless · FLAC"
+msgstr "Sans perte · FLAC"
 
 #: src/ui/settings.rs:459
 msgid "Soloist client key"
@@ -3384,8 +3384,8 @@ msgid "Get a key"
 msgstr "Obtenir une clé"
 
 #: src/ui/settings.rs:551
-msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
-msgstr "Lecture via Spotify Soloist, en FLAC si votre abonnement inclut la lecture sans perte."
+msgid "Lossless plays through Spotify Soloist, in FLAC when your plan includes it."
+msgstr "Sans perte passe par Spotify Soloist, en FLAC si votre abonnement l’inclut."
 
 #: src/ui/settings.rs:559
 msgid "Saved in the system's protected storage."

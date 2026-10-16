@@ -69,6 +69,23 @@ const SOLOIST_KEY_GUIDE_URL: &str =
 pub(crate) const PERSONAL_APP_GUIDE_URL: &str =
     "https://spotifast.rocks/make-it-even-faster/#make-a-spotify-app";
 
+/// Whether an audio quality choice is the current one: a bitrate, or `None`
+/// for lossless.
+fn quality_selected(settings: &crate::settings::Settings, choice: Option<u16>) -> bool {
+    let lossless = crate::soloist::AVAILABLE && settings.lossless;
+    match choice {
+        Some(kbps) => !lossless && settings.bitrate == kbps,
+        None => lossless,
+    }
+}
+
+/// Picks an audio quality. Lossless keeps the best bitrate for when it
+/// falls back to standard playback.
+fn choose_quality(settings: &mut crate::settings::Settings, choice: Option<u16>) {
+    settings.lossless = choice.is_none();
+    settings.bitrate = choice.unwrap_or(320);
+}
+
 fn section_matches(needle: &str, title: &str, rows: &[RowText<'_>]) -> bool {
     let needle = needle.trim().to_lowercase();
     rows.iter().any(|row| row.matches(&needle, title))
@@ -528,8 +545,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let apply_playback = gettext(locale, "Apply and restart playback");
     let apply_playback_note = gettext(locale, "Restart local playback to apply these settings.");
     let download_updates = gettext(locale, "Download updates automatically");
-    let lossless = gettext(locale, "Lossless playback");
     let soloist_key = gettext(locale, "Soloist client key");
+    let quality_note = gettext(locale, "Higher bitrates use more data and cache space.");
     let playback_rows = [
         RowText::new(
             // Translators: {status} is a playback state such as Ready or Not set up.
@@ -542,7 +559,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ),
         RowText::new(
             gettext(locale, "Audio quality"),
-            gettext(locale, "Higher bitrates use more data and cache space."),
+            if crate::soloist::AVAILABLE {
+                format!(
+                    "{quality_note} {}",
+                    gettext(
+                        locale,
+                        "Lossless plays through Spotify Soloist, in FLAC when your plan includes it.",
+                    )
+                )
+                .into()
+            } else {
+                quality_note
+            },
         ),
         RowText::new(
             normalize_volume.clone(),
@@ -612,14 +640,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         )
         .when(cfg!(target_os = "macos")),
         RowText::new(
-            lossless.clone(),
-            gettext(
-                locale,
-                "Plays through Spotify Soloist, in FLAC when your plan has lossless.",
-            ),
-        )
-        .when(crate::soloist::AVAILABLE),
-        RowText::new(
             soloist_key.clone(),
             if app.soloist_key_saved == Some(true) {
                 gettext(locale, "Saved in the system's protected storage.")
@@ -671,39 +691,46 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     playback_dirty = true;
                 }
             });
-            // Normal to Very high, left to right when side by side and top
-            // to bottom in a column.
-            let choices = [
-                (96u16, gettext(locale, "Normal · 96 kbps")),
-                (160, gettext(locale, "High · 160 kbps")),
-                (320, gettext(locale, "Very high · 320 kbps")),
+            // Normal to Very high, then Lossless where Soloist runs, left to
+            // right when side by side and top to bottom in a column.
+            let mut choices = vec![
+                (Some(96u16), gettext(locale, "Normal · 96 kbps")),
+                (Some(160), gettext(locale, "High · 160 kbps")),
+                (Some(320), gettext(locale, "Very high · 320 kbps")),
             ];
+            if crate::soloist::AVAILABLE {
+                choices.push((None, gettext(locale, "Lossless · FLAC")));
+            }
             let choice_gap = 6.0;
             let choices_width = choices
                 .iter()
                 .map(|(_, label)| theme::soft_button_width(ui, label))
                 .sum::<f32>()
                 + choice_gap * (choices.len() - 1) as f32;
+            // The description beside four choices would wrap into a narrow
+            // column; it keeps a readable width or the choices go below it.
+            let row_control_width = if ui.available_width() - choices_width < 320.0 {
+                ui.available_width()
+            } else {
+                choices_width
+            };
             filtered_row_sized(
                 ui,
                 &palette,
                 &needle,
                 &playback,
                 &playback_rows[2],
-                choices_width,
+                row_control_width,
                 |ui| {
-                    let mut choose = |ui: &mut egui::Ui, kbps: u16, label: &str| {
-                        if theme::soft_button(
-                            ui,
-                            &palette,
-                            None,
-                            label,
-                            app.settings.bitrate == kbps,
-                        )
-                        .clicked()
-                            && app.settings.bitrate != kbps
+                    let mut choose = |ui: &mut egui::Ui, choice: Option<u16>, label: &str| {
+                        let selected = quality_selected(&app.settings, choice);
+                        if theme::soft_button(ui, &palette, None, label, selected).clicked()
+                            && !selected
                         {
-                            app.settings.bitrate = kbps;
+                            choose_quality(&mut app.settings, choice);
+                            if app.settings.lossless && app.soloist_key_saved.is_none() {
+                                app.actions.push(Action::CheckSoloistKey);
+                            }
                             changed = true;
                             playback_dirty = true;
                         }
@@ -876,15 +903,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
             filtered_row(ui, &palette, &needle, &playback, &playback_rows[15], |ui| {
-                if widgets::switch(ui, &palette, &lossless, &mut app.settings.lossless).changed() {
-                    changed = true;
-                    playback_dirty = true;
-                    if app.settings.lossless && app.soloist_key_saved.is_none() {
-                        app.actions.push(Action::CheckSoloistKey);
-                    }
-                }
-            });
-            filtered_row(ui, &palette, &needle, &playback, &playback_rows[16], |ui| {
                 // Laid right to left: the buttons first, then the field.
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -2259,7 +2277,34 @@ fn eq_curve(ui: &mut egui::Ui, palette: &Palette, settings: &crate::eq::EqSettin
 
 #[cfg(test)]
 mod tests {
-    use super::{RowText, row_matches, section_matches};
+    use super::{RowText, choose_quality, quality_selected, row_matches, section_matches};
+
+    #[test]
+    fn lossless_is_one_audio_quality_and_keeps_the_best_bitrate() {
+        let mut settings = crate::settings::Settings {
+            bitrate: 160,
+            lossless: false,
+            ..Default::default()
+        };
+        assert!(quality_selected(&settings, Some(160)));
+        assert!(!quality_selected(&settings, None));
+
+        choose_quality(&mut settings, None);
+        assert!(settings.lossless);
+        // What standard playback falls back to when lossless cannot play.
+        assert_eq!(settings.bitrate, 320);
+        assert_eq!(quality_selected(&settings, None), crate::soloist::AVAILABLE);
+        assert_eq!(
+            quality_selected(&settings, Some(320)),
+            !crate::soloist::AVAILABLE
+        );
+
+        choose_quality(&mut settings, Some(96));
+        assert!(!settings.lossless);
+        assert_eq!(settings.bitrate, 96);
+        assert!(quality_selected(&settings, Some(96)));
+        assert!(!quality_selected(&settings, None));
+    }
 
     #[test]
     fn empty_filter_matches_everything() {

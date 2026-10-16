@@ -193,6 +193,10 @@ pub struct LocalState {
     /// `Paused` that brings the position counts as a seek for media
     /// controls, which would otherwise count on past the end (#587).
     pub replay_pending: bool,
+    /// The audio playing is lossless, as its samples prove (see
+    /// `soloist::pcm::Fidelity`). Only Soloist sets it; librespot's Ogg
+    /// Vorbis never is.
+    pub lossless: bool,
 }
 
 /// What local playback was doing when its session ended, so the engine

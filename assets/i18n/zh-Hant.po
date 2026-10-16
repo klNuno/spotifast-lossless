@@ -3242,8 +3242,8 @@ msgid "Soloist key removed"
 msgstr "已移除 Soloist 金鑰"
 
 #: src/ui/settings.rs:458
-msgid "Lossless playback"
-msgstr "無損音質播放"
+msgid "Lossless · FLAC"
+msgstr "無損 · FLAC"
 
 #: src/ui/settings.rs:459
 msgid "Soloist client key"
@@ -3254,8 +3254,8 @@ msgid "Get a key"
 msgstr "取得金鑰"
 
 #: src/ui/settings.rs:551
-msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
-msgstr "透過 Spotify Soloist 播放，你的方案支援無損音質時會使用 FLAC 格式。"
+msgid "Lossless plays through Spotify Soloist, in FLAC when your plan includes it."
+msgstr "無損透過 Spotify Soloist 播放，你的方案支援時會使用 FLAC 格式。"
 
 #: src/ui/settings.rs:559
 msgid "Saved in the system's protected storage."

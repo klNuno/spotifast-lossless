@@ -63,6 +63,8 @@ pub(crate) struct Hooks {
     /// Audio the output holds after a write returns, reported back so
     /// Soloist's position accounts for it.
     pub held_ms: u32,
+    /// Told when the audio turns out lossless, or stops being.
+    pub lossless: Arc<dyn Fn(bool) + Send + Sync>,
 }
 
 pub(crate) type SinkBuilder = Box<dyn FnOnce() -> Box<dyn Sink> + Send>;
@@ -134,6 +136,7 @@ fn accept_loop(
         builder: Some(builder),
         sink: None,
         started: false,
+        fidelity: Fidelity::default(),
     };
     for stream in listener.incoming() {
         if stop.load(Ordering::SeqCst) {
@@ -170,6 +173,9 @@ struct Output {
     builder: Option<SinkBuilder>,
     sink: Option<Box<dyn Sink>>,
     started: bool,
+    /// Kept across streams, so a new track does not show lossy for the
+    /// half second it takes to prove itself again.
+    fidelity: Fidelity,
 }
 
 impl Output {
@@ -199,6 +205,40 @@ impl Output {
             }
             self.started = false;
         }
+    }
+}
+
+/// Non-silent samples on the grid that prove lossless audio: half a second.
+const LOSSLESS_PROOF: usize = SAMPLE_RATE as usize;
+
+/// Tells lossless audio by its samples, since Soloist does not say what it
+/// plays. Its FLAC arrives as floats on exact 16- or 24-bit steps, while
+/// decoded Ogg Vorbis falls between them within a few samples. Silence
+/// proves nothing either way.
+#[derive(Default)]
+struct Fidelity {
+    /// Non-silent samples on the grid since the last one off it.
+    exact: usize,
+    lossless: bool,
+}
+
+impl Fidelity {
+    /// The new verdict, when these samples change it.
+    fn hear(&mut self, samples: &[f64]) -> Option<bool> {
+        for &sample in samples {
+            if sample == 0.0 {
+                continue;
+            }
+            if (sample * f64::from(1u32 << 23)).fract() != 0.0 {
+                self.exact = 0;
+                return std::mem::take(&mut self.lossless).then_some(false);
+            }
+            self.exact += 1;
+        }
+        (!self.lossless && self.exact >= LOSSLESS_PROOF).then(|| {
+            self.lossless = true;
+            true
+        })
     }
 }
 
@@ -579,6 +619,13 @@ fn play(output: &mut Output, shared: &Shared, hooks: &Hooks) -> io::Result<()> {
                 output.start();
                 let samples = format.decode(&block);
                 let frames = samples.len() / usize::from(NUM_CHANNELS);
+                // 16-bit samples sit on the grid whatever they decoded from.
+                if format == Format::F32
+                    && let Some(lossless) = output.fidelity.hear(&samples)
+                {
+                    log::info!("soloist audio: lossless {lossless}");
+                    (hooks.lossless)(lossless);
+                }
                 match output
                     .sink()
                     .write(AudioPacket::Samples(samples), &mut converter)
@@ -704,6 +751,7 @@ mod tests {
                 audio: AudioControl::new(100),
                 mixer,
                 held_ms: 40,
+                lossless: Arc::new(|_| {}),
             },
         )
         .unwrap()
@@ -810,6 +858,7 @@ mod tests {
                 audio: AudioControl::new(100),
                 mixer: Arc::clone(mixer),
                 held_ms: 40,
+                lossless: Arc::new(|_| {}),
             },
         )
         .unwrap()
@@ -838,6 +887,68 @@ mod tests {
         let expected: Vec<f64> = values.iter().map(|v| f64::from(*v)).collect();
         assert_eq!(seen.samples, expected);
         assert_eq!(seen.events, ["start", "write", "stop"]);
+    }
+
+    /// A 24-bit tone that never crosses zero, as Soloist hands over FLAC.
+    fn flac_tone(frames: usize) -> Vec<f64> {
+        (0..frames * 2)
+            .map(|n| ((n as f64 * 0.01).sin() * 4_000_000.0).round() / 8_388_608.0 + 0.5)
+            .collect()
+    }
+
+    #[test]
+    fn exact_samples_prove_lossless_and_one_lossy_sample_takes_it_back() {
+        let mut fidelity = Fidelity::default();
+        // Silence proves nothing, however long.
+        assert_eq!(fidelity.hear(&vec![0.0; LOSSLESS_PROOF * 4]), None);
+        let tone = flac_tone(LOSSLESS_PROOF / 2);
+        assert_eq!(fidelity.hear(&tone[..LOSSLESS_PROOF - 10]), None);
+        assert_eq!(fidelity.hear(&tone[LOSSLESS_PROOF - 10..]), Some(true));
+        assert_eq!(fidelity.hear(&tone), None, "the verdict is told once");
+
+        // Decoded Ogg Vorbis lands between the 24-bit steps.
+        let vorbis: Vec<f64> = tone.iter().map(|s| s + 1e-9).collect();
+        assert_eq!(fidelity.hear(&vorbis), Some(false));
+        assert_eq!(fidelity.hear(&vorbis), None);
+        assert_eq!(fidelity.hear(&tone), Some(true));
+    }
+
+    #[test]
+    fn the_receiver_reports_lossless_float_audio_but_not_16_bit_audio() {
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let start = |sample: u32| {
+            let told = Arc::clone(&told);
+            let receiver = Receiver::start(
+                Box::new(|| Box::new(Recorder(Arc::default())) as Box<dyn Sink>),
+                Hooks {
+                    audio: AudioControl::new(100),
+                    mixer: Arc::new(SoftMixer::open(MixerConfig::default()).unwrap()),
+                    held_ms: 40,
+                    lossless: Arc::new(move |lossless| told.lock().unwrap().push(lossless)),
+                },
+            )
+            .unwrap();
+            (receiver, sample)
+        };
+        for (receiver, sample) in [start(PA_SAMPLE_FLOAT32LE), start(PA_SAMPLE_S16LE)] {
+            let mut shim = TcpStream::connect((Ipv4Addr::LOCALHOST, receiver.port())).unwrap();
+            shim.write_all(&message(MSG_FORMAT, &format(sample, 44100, 2)))
+                .unwrap();
+            read_ack(&mut shim);
+            let tone = flac_tone(LOSSLESS_PROOF / 2);
+            let pcm: Vec<u8> = if sample == PA_SAMPLE_FLOAT32LE {
+                tone.iter()
+                    .flat_map(|s| (*s as f32).to_le_bytes())
+                    .collect()
+            } else {
+                tone.iter()
+                    .flat_map(|s| ((s * 32767.0) as i16).to_le_bytes())
+                    .collect()
+            };
+            shim.write_all(&message(MSG_PCM, &pcm)).unwrap();
+            read_ack(&mut shim);
+        }
+        assert_eq!(*told.lock().unwrap(), [true]);
     }
 
     #[test]

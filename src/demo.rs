@@ -1127,6 +1127,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 app.settings.skin_scale = Some(2);
             }
             "playlist" => app.settings.playlist_open = true,
+            // Lossless chosen, and this computer playing audio proven
+            // lossless.
+            "lossless" => {
+                app.settings.lossless = true;
+                play_here(app);
+                app.local.playback = crate::player::Playback::Playing;
+                app.local.lossless = true;
+            }
             "shade" => app.settings.winamp_shaded = true,
             "playlist-shade" => app.settings.playlist_shaded = true,
             "eq" => {

@@ -3318,8 +3318,8 @@ msgid "Soloist key removed"
 msgstr "Soloistキーを削除しました"
 
 #: src/ui/settings.rs:458
-msgid "Lossless playback"
-msgstr "ロスレス再生"
+msgid "Lossless · FLAC"
+msgstr "ロスレス · FLAC"
 
 #: src/ui/settings.rs:459
 msgid "Soloist client key"
@@ -3330,8 +3330,8 @@ msgid "Get a key"
 msgstr "キーを取得"
 
 #: src/ui/settings.rs:551
-msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
-msgstr "Spotify Soloist経由で再生します。プランがロスレスに対応している場合はFLACで再生します。"
+msgid "Lossless plays through Spotify Soloist, in FLAC when your plan includes it."
+msgstr "ロスレスはSpotify Soloist経由で再生し、プランが対応している場合はFLACで再生します。"
 
 #: src/ui/settings.rs:559
 msgid "Saved in the system's protected storage."

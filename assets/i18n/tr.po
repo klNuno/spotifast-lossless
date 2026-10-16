@@ -3352,8 +3352,8 @@ msgid "Soloist key removed"
 msgstr "Soloist anahtarı kaldırıldı"
 
 #: src/ui/settings.rs:458
-msgid "Lossless playback"
-msgstr "Kayıpsız çalma"
+msgid "Lossless · FLAC"
+msgstr "Kayıpsız · FLAC"
 
 #: src/ui/settings.rs:459
 msgid "Soloist client key"
@@ -3364,8 +3364,8 @@ msgid "Get a key"
 msgstr "Anahtar al"
 
 #: src/ui/settings.rs:551
-msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
-msgstr "Spotify Soloist üzerinden çalar. Planınızda kayıpsız ses varsa FLAC formatında çalar."
+msgid "Lossless plays through Spotify Soloist, in FLAC when your plan includes it."
+msgstr "Kayıpsız, Spotify Soloist üzerinden çalar; planınızda varsa FLAC formatında."
 
 #: src/ui/settings.rs:559
 msgid "Saved in the system's protected storage."

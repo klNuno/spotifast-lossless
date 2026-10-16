@@ -150,6 +150,18 @@ impl Soloist {
                 audio: Arc::clone(&shared.audio),
                 mixer,
                 held_ms,
+                lossless: {
+                    let state = Arc::clone(&shared.state);
+                    let notify = Arc::clone(&shared.notify);
+                    Arc::new(move |lossless| {
+                        let snapshot = {
+                            let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
+                            state.lossless = lossless;
+                            state.clone()
+                        };
+                        notify(crate::player::EngineEvent::State(snapshot));
+                    })
+                },
             },
         )
         .context("cannot open the port Soloist's audio comes back on")?;

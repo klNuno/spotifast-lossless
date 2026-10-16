@@ -267,7 +267,7 @@ main fields are:
 | `gapless` | `true` | Gapless playback |
 | `audio_backend` | platform | `pulseaudio` or `rodio` on Linux. `rodio` is Spotifast's own output, through ALSA; librespot's separate rodio backend is no longer built in, and a backend this build lacks plays through Spotifast's own output |
 | `audio_cache_mb` | `1024` | On-disk audio cache budget |
-| `lossless` | `false` | Play through Spotify Soloist, in FLAC when the plan has lossless. Linux and Windows on x86_64 |
+| `lossless` | `false` | Play through Spotify Soloist, in FLAC when the plan has lossless (Audio quality → Lossless; `bitrate` is what plays if it falls back). Linux and Windows on x86_64 |
 | `theme` | `system` | Follow the system appearance by default; explicit `dark` and `light` choices remain available |
 | `language` | `system` | Since 0.10.0: the interface language. `system` follows the operating system's preferred languages and falls back to English; a tag such as `es`, `de-DE`, `pt-BR` or `zh-Hant` selects that language. An unknown tag follows the system |
 | `custom_theme` | `null` | Selected JSON filename from the `themes` folder |
@@ -349,7 +349,7 @@ settings.
 `--demo-page` opens a page, such as `home`, `playlist:pl1`, or `artist:art0`,
 and `--demo-show` adds surfaces on top of it: a comma separated list of
 `queue`, `playing-next`, `devices`, `shortcuts`, `premium`, `create`, `duplicate`, `light`,
-`focus`, `winamp`, `playlist`, `eq`, `eq-shade`, `compact`, `update`, `personal-app`,
+`focus`, `winamp`, `playlist`, `lossless`, `eq`, `eq-shade`, `compact`, `update`, `personal-app`,
 `collection-loading`, `shuffle-selected`, `shuffle-started`, `library-list`,
 `library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,
 `library-grid-wide`, `rtl`, `player-bar-spectrum`, `player-bar-waveform`,
@@ -358,7 +358,9 @@ a normal, narrow, or wide sidebar and collapsed artwork for matching captures.
 `shuffle-selected` and `shuffle-started` capture the selected-mode and
 playback-started outcomes of a collection Shuffle click. `update` shows a sample
 update badge for checking its layout. `personal-app` shows the personal Spotify
-app introduction.
+app introduction. `lossless` picks Lossless as the audio quality and plays on
+this computer with the audio proven lossless, which the Winamp window shows as
+FLC.
 `signed-out` and `connecting` show the sign-in card before and while the
 session connects; `connecting-personal-app` unfolds its personal app setup,
 and `connecting-rate-limited` adds the notice shown when Spotify rate limits

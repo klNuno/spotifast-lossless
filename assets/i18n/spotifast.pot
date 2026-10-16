@@ -3221,7 +3221,7 @@ msgid "Soloist key removed"
 msgstr ""
 
 #: src/ui/settings.rs:458
-msgid "Lossless playback"
+msgid "Lossless · FLAC"
 msgstr ""
 
 #: src/ui/settings.rs:459
@@ -3233,7 +3233,7 @@ msgid "Get a key"
 msgstr ""
 
 #: src/ui/settings.rs:551
-msgid "Plays through Spotify Soloist, in FLAC when your plan has lossless."
+msgid "Lossless plays through Spotify Soloist, in FLAC when your plan includes it."
 msgstr ""
 
 #: src/ui/settings.rs:559

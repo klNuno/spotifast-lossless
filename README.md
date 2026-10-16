@@ -31,12 +31,14 @@ The interface includes complete
 **Playback needs Spotify Premium.** Free accounts can browse and search, but
 cannot play music through Spotifast.
 
-**This fork adds lossless playback.** Settings → Playback → Lossless playback
-plays through Spotify Soloist, Spotify's own Connect receiver for Linux, which
+**This fork adds lossless playback.** Settings → Playback → Audio quality →
+Lossless plays through Spotify Soloist, Spotify's own Connect receiver for Linux, which
 streams FLAC on plans that include lossless. Its audio still goes through
 Spotifast's equalizer, visualisers and output. It runs on x86_64 Linux, and on
 Windows in a small Linux machine that ships with Spotifast (no WSL, no
-administrator), and needs the client key Spotify issues for Soloist.
+administrator), and needs the client key Spotify issues for Soloist. The
+Winamp window shows FLC in place of the bitrate once the samples prove the
+audio lossless.
 Details: [how it connects](docs/_reference/how-it-connects.md#lossless-playback-through-soloist).
 
 ![Spotifast Home with the playlist library, recommendations, queue, and player visible](docs/screenshot.png)
