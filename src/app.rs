@@ -571,9 +571,10 @@ pub struct App {
     shuffle_wanted: bool,
     /// Last local shuffle change, used to ignore its echo from the engine.
     shuffle_set_at: Option<Instant>,
-    /// When tracks recently came up unavailable, to spot a key-service
-    /// cascade and reconnect once instead of skipping through an album.
-    unavailable_at: Vec<Instant>,
+    /// When tracks recently came up unavailable, and which, to spot a
+    /// key-service cascade and reconnect once instead of skipping through
+    /// an album.
+    unavailable_at: Vec<(Instant, String)>,
     last_unavailable_reconnect: Option<Instant>,
     /// The Premium notice has been shown for this sign-in.
     premium_notice_shown: bool,
@@ -2718,8 +2719,13 @@ impl App {
             if error.starts_with("This item isn't available") {
                 let now = Instant::now();
                 self.unavailable_at
-                    .retain(|at| now.duration_since(*at) < Duration::from_secs(20));
-                self.unavailable_at.push(now);
+                    .retain(|(at, _)| now.duration_since(*at) < Duration::from_secs(20));
+                // The same song refused again is still the catalogue, however
+                // many skips land on it; only different songs point at the
+                // session. The error names the song.
+                if !self.unavailable_at.iter().any(|(_, seen)| seen == error) {
+                    self.unavailable_at.push((now, error.clone()));
+                }
                 if self.unavailable_at.len() >= 3
                     && self
                         .last_unavailable_reconnect
@@ -15145,6 +15151,38 @@ mod tests {
             "the real engine track wins without waiting for a timeout"
         );
         assert!(app.intent_track.is_none());
+    }
+
+    /// Skipping onto the same unavailable song three times is that song,
+    /// not the session: only three different songs in a row reconnect.
+    #[test]
+    fn one_unavailable_song_hit_again_does_not_reconnect() {
+        let mut app = headless_app();
+        let report = |app: &mut App, error: Option<&str>| {
+            let mut state = app.local.clone();
+            state.error = error.map(str::to_string);
+            app.handle_local(state);
+        };
+        for _ in 0..3 {
+            report(
+                &mut app,
+                Some("This item isn't available: spotify:track:lamano"),
+            );
+            report(&mut app, None);
+        }
+        assert!(app.last_unavailable_reconnect.is_none());
+
+        for song in ["one", "two"] {
+            report(
+                &mut app,
+                Some(&format!("This item isn't available: spotify:track:{song}")),
+            );
+            report(&mut app, None);
+        }
+        assert!(
+            app.last_unavailable_reconnect.is_some(),
+            "three different songs refused in a row still reconnect"
+        );
     }
 
     /// Remote state is polled rather than pushed. Ignore a poll already in
