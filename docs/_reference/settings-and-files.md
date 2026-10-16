@@ -349,7 +349,7 @@ settings.
 `--demo-page` opens a page, such as `home`, `playlist:pl1`, or `artist:art0`,
 and `--demo-show` adds surfaces on top of it: a comma separated list of
 `queue`, `playing-next`, `devices`, `shortcuts`, `premium`, `create`, `duplicate`, `light`,
-`focus`, `winamp`, `playlist`, `lossless`, `eq`, `eq-shade`, `compact`, `update`, `personal-app`,
+`focus`, `winamp`, `playlist`, `lossless`, `lossless-pairing`, `eq`, `eq-shade`, `compact`, `update`, `personal-app`,
 `collection-loading`, `shuffle-selected`, `shuffle-started`, `library-list`,
 `library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,
 `library-grid-wide`, `rtl`, `player-bar-spectrum`, `player-bar-waveform`,
@@ -361,6 +361,8 @@ update badge for checking its layout. `personal-app` shows the personal Spotify
 app introduction. `lossless` picks Lossless as the audio quality and plays on
 this computer with the audio proven lossless, which the Winamp window shows as
 FLC.
+`lossless-pairing` shows lossless waiting for a Spotify app to pick the
+pairing station once: its notice, and the line under Audio quality.
 `signed-out` and `connecting` show the sign-in card before and while the
 session connects; `connecting-personal-app` unfolds its personal app setup,
 and `connecting-rate-limited` adds the notice shown when Spotify rate limits

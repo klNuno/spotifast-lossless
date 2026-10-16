@@ -23,20 +23,47 @@ mod install;
 mod pcm;
 mod prefs;
 mod process;
+mod station;
 #[cfg(windows)]
 mod vm;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use librespot_playback::mixer::Mixer;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{OwnedMutexGuard, mpsc, watch};
 
 pub(crate) use control::{Command, Shared};
 pub(crate) use pcm::{SinkBuilder, percent};
 use process::Report;
+pub use station::StationEvent;
+pub(crate) use station::{Station, StationStart};
+
+/// Starts every error that only a pairing from a Spotify app can fix:
+/// Soloist keeps an account only when Spotify's own controller signed it in.
+pub(crate) const NOT_PAIRED: &str = "Spotify Soloist is not paired with this account";
+
+/// Whether `error` is one only a pairing from a Spotify app can fix.
+pub(crate) fn needs_pairing(error: &str) -> bool {
+    error.contains(NOT_PAIRED)
+}
+
+/// One Soloist at a time: they share Soloist's data, which on Windows is
+/// the machine's one data disk, and the files `prepare` writes.
+static SLOT: LazyLock<Arc<tokio::sync::Mutex<()>>> = LazyLock::new(Arc::default);
+/// How long a start waits for the Soloist before it to stop.
+const SLOT_WAIT: Duration = Duration::from_secs(15);
+
+/// Waits until no other Soloist runs or prepares, at most [`SLOT_WAIT`].
+async fn take_slot() -> Option<OwnedMutexGuard<()>> {
+    let slot = tokio::time::timeout(SLOT_WAIT, Arc::clone(&SLOT).lock_owned()).await;
+    if slot.is_err() {
+        log::warn!("soloist: another Soloist is still running");
+    }
+    slot.ok()
+}
 
 /// Whether this build can run Soloist: Spotify publishes it for x86_64
 /// Linux, which Windows runs in Spotifast's machine.
@@ -69,6 +96,7 @@ impl std::fmt::Debug for Config {
 /// it ready. On Windows this also writes the machine's system disk.
 pub(crate) async fn install(config: &Config, proxy: &crate::settings::ProxyConfig) -> Result<()> {
     let (dir, proxy) = (config.dir.clone(), proxy.clone());
+    let _slot = take_slot().await;
     tokio::task::spawn_blocking(move || prepare(&dir, &proxy).map(drop))
         .await
         .map_err(|error| anyhow!("{error}"))?
@@ -116,6 +144,8 @@ pub(crate) struct Soloist {
     control: control::Control,
     device_id: String,
     process: Mutex<Option<process::Process>>,
+    /// Given back once the process has stopped.
+    slot: Mutex<Option<OwnedMutexGuard<()>>>,
     ended: watch::Receiver<bool>,
     notify: crate::player::Notify,
     /// Dropped after the process, so Soloist never writes into a closed port.
@@ -138,6 +168,8 @@ impl Soloist {
             shared,
             pairing,
         } = start;
+        // Declared first, so every early return lets it go last.
+        let slot = take_slot().await;
         let launch = {
             let dir = config.dir.clone();
             tokio::task::spawn_blocking(move || prepare(&dir, &proxy))
@@ -172,29 +204,21 @@ impl Soloist {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            // The machine applies them itself, on its own disk.
-            if let Some(data) = &launch.data_host {
-                prefs::apply(data)?;
-            }
             let volume_percent = if attempt == 1 {
                 pcm::percent(initial_volume)
             } else {
                 pcm::percent(state.lock().unwrap_or_else(PoisonError::into_inner).volume)
             };
-            let (process, mut reports) = process::spawn(
-                &launch.process,
-                &process::Args {
+            let (process, reports, ports) = launch
+                .run(&process::Args {
                     name: &device_name,
                     key: &config.key,
                     volume_percent,
                     pcm_port: pcm.port(),
                     cache_mb: 100,
-                },
-            )?;
+                })
+                .await?;
             let mut process = Some(process);
-            let ports = tokio::time::timeout(START_TIMEOUT, ports(&mut reports))
-                .await
-                .map_err(|_| anyhow!("Spotify Soloist did not start in time"))??;
             let (control, task) = control::connect(ports.control, Arc::clone(&shared)).await?;
             // Running from now on, so the login below reaches the state.
             let task = tokio::spawn(task);
@@ -218,15 +242,17 @@ impl Soloist {
             let unpaired = info.active_user.is_empty() && !signed_in;
             if (unpaired || other_user) && attempt == 1 {
                 let Some(credentials) = &pairing else {
-                    bail!("Spotify Soloist has no account yet");
+                    bail!("{NOT_PAIRED}: it has no account yet");
                 };
                 if refused_before(&config.dir, &credentials.username) {
                     log::info!(
                         "soloist: this account's pairing was refused before; not waiting on it"
                     );
-                    bail!("Spotify Soloist did not log in with this account");
+                    bail!("{NOT_PAIRED}: Spotify refused it before");
                 }
-                pair(ports.pairing, &info, credentials, &device_name).await?;
+                pair(ports.pairing, &info, credentials, &device_name)
+                    .await
+                    .map_err(|error| anyhow!("{NOT_PAIRED}: {error:#}"))?;
                 if let Err(error) = wait_user(ports.pairing, &credentials.username).await {
                     remember_refused(&config.dir, &credentials.username);
                     return Err(error);
@@ -254,6 +280,7 @@ impl Soloist {
                 control,
                 device_id: info.device_id,
                 process: Mutex::new(process),
+                slot: Mutex::new(slot),
                 ended,
                 notify,
                 _pcm: pcm,
@@ -293,6 +320,10 @@ impl Soloist {
         {
             process.stop();
         }
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 }
 
@@ -336,6 +367,24 @@ async fn exited(mut reports: mpsc::UnboundedReceiver<Report>) {
         if report == Report::Exited {
             return;
         }
+    }
+}
+
+impl Prepared {
+    /// Starts Soloist and waits until it listens.
+    async fn run(
+        &self,
+        args: &process::Args<'_>,
+    ) -> Result<(process::Process, mpsc::UnboundedReceiver<Report>, Ports)> {
+        // The machine applies them itself, on its own disk.
+        if let Some(data) = &self.data_host {
+            prefs::apply(data)?;
+        }
+        let (process, mut reports) = process::spawn(&self.process, args)?;
+        let ports = tokio::time::timeout(START_TIMEOUT, ports(&mut reports))
+            .await
+            .map_err(|_| anyhow!("Spotify Soloist did not start in time"))??;
+        Ok((process, reports, ports))
     }
 }
 
@@ -414,7 +463,7 @@ async fn wait_user(port: u16, user: &str) -> Result<()> {
             return Ok(());
         }
     }
-    bail!("Spotify Soloist did not log in with this account")
+    bail!("{NOT_PAIRED}: Spotify refused the pairing")
 }
 
 /// Where Soloist's refusal of an account's pairing is kept, so the next

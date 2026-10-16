@@ -13,8 +13,8 @@ use crate::api::models::{
     Show, Track, TrackCount, User, UserRef, pick_image,
 };
 use crate::backend::{
-    ApiRequest, ApiResponse, AuthStatus, Backend, Command, Event, LocalPlayback, LyricsRequest,
-    PLAYLIST_PAGE_SIZE, PlaylistCacheRows, RecentsFor, RemoteAction, Waker,
+    ApiRequest, ApiResponse, AuthStatus, Backend, Command, Event, LocalPlayback, LosslessNotice,
+    LyricsRequest, PLAYLIST_PAGE_SIZE, PlaylistCacheRows, RecentsFor, RemoteAction, Waker,
 };
 use crate::i18n::{Locale, gettext, ngettext};
 use crate::model::QueueTab;
@@ -517,6 +517,9 @@ pub struct App {
     pub lyrics_line_shown: Option<Option<usize>>,
     pub show_devices: bool,
     pub toasts: Vec<Toast>,
+    /// What the lossless pairing station is listed as, while lossless
+    /// waits for a Spotify app to pick it once.
+    pub lossless_pairing: Option<String>,
     pub actions: Vec<Action>,
     volume_before_mute: Option<u8>,
     /// Context and track URIs whose pending play buttons show a spinner.
@@ -1033,6 +1036,7 @@ impl App {
             lyrics_line_shown: None,
             show_devices: false,
             toasts: Vec::new(),
+            lossless_pairing: None,
             actions: Vec::new(),
             volume_before_mute: None,
             pending_play_keys: Vec::new(),
@@ -2126,7 +2130,7 @@ impl App {
                     result,
                 } => self.handle_proxy_applied(request, config, result),
                 Event::Error(message) => self.toast_error(message),
-                Event::Notice(message) => self.toast(message),
+                Event::Lossless(notice) => self.lossless_notice(notice),
                 Event::Rootlist { result } => match result {
                     Ok(rootlist) => {
                         let account_id = self.user_id().map(str::to_owned).or_else(|| {
@@ -10838,6 +10842,27 @@ impl App {
             created: Instant::now(),
         });
         self.toasts.truncate(4);
+    }
+
+    fn lossless_notice(&mut self, notice: LosslessNotice) {
+        match notice {
+            LosslessNotice::Unavailable => self.toast(gettext(
+                self.locale,
+                "Lossless unavailable right now, playing standard quality.",
+            )),
+            LosslessNotice::Pair(name) => {
+                self.toast(self.locale.lossless_pairing_hint(&name));
+                self.lossless_pairing = Some(name);
+            }
+            LosslessNotice::PairingClosed => self.lossless_pairing = None,
+            LosslessNotice::Paired => {
+                self.lossless_pairing = None;
+                self.toast(gettext(
+                    self.locale,
+                    "Lossless is paired. Switching to it now.",
+                ));
+            }
+        }
     }
 
     pub fn toast_error(&mut self, message: impl Into<String>) {

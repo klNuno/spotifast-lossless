@@ -1135,6 +1135,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 app.local.playback = crate::player::Playback::Playing;
                 app.local.lossless = true;
             }
+            "lossless-pairing" => {
+                app.settings.lossless = true;
+                play_here(app);
+                app.local.playback = crate::player::Playback::Playing;
+                app.lossless_pairing = Some("Spotifast Lossless".into());
+                app.toast(app.locale.lossless_pairing_hint("Spotifast Lossless"));
+            }
             "shade" => app.settings.winamp_shaded = true,
             "playlist-shade" => app.settings.playlist_shaded = true,
             "eq" => {

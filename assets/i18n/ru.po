@@ -3405,6 +3405,24 @@ msgstr ""
 "Spotify сейчас ограничивает общее приложение, поэтому это может занять "
 "несколько минут. С личным приложением вход проходит без ожидания."
 
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr "Без потерь сейчас недоступно, играет стандартное качество."
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr "Без потерь сопряжено. Переключаемся."
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr ""
+"Чтобы слушать без потерь, один раз выбери «{name}» в устройствах приложения "
+"Spotify в этой сети."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Не удалось загрузить этот раздел"
 

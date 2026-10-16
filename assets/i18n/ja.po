@@ -3355,6 +3355,22 @@ msgid ""
 "personal app signs you in without waiting."
 msgstr "Spotify が現在共有アプリを制限しているため、数分かかることがあります。個人用アプリなら待たずにサインインできます。"
 
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr "現在ロスレスは利用できません。標準音質で再生しています。"
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr "ロスレスのペアリングが完了しました。今すぐ切り替えます。"
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr "ロスレスで再生するには、このネットワーク上のSpotifyアプリのデバイス一覧で「{name}」を一度選択してください。"
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "このセクションを読み込めませんでした"
 

@@ -230,6 +230,18 @@ impl Locale {
         };
         label.replace("{name}", name)
     }
+
+    /// What to do so lossless plays: pick the pairing station, listed as
+    /// `name`, once in a Spotify app.
+    pub fn lossless_pairing_hint(self, name: &str) -> String {
+        // Translators: Keep {name} exactly as written. It becomes the name a
+        // Spotify app lists this computer under, such as "Spotifast Lossless".
+        gettext(
+            self,
+            "To play lossless, pick “{name}” once in a Spotify app's devices on this network.",
+        )
+        .replace("{name}", name)
+    }
 }
 
 /// Every bundled language, in the order the Settings picker lists them: by

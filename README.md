@@ -36,7 +36,10 @@ Lossless plays through Spotify Soloist, Spotify's own Connect receiver for Linux
 streams FLAC on plans that include lossless. Its audio still goes through
 Spotifast's equalizer, visualisers and output. It runs on x86_64 Linux, and on
 Windows in a small Linux machine that ships with Spotifast (no WSL, no
-administrator), and needs the client key Spotify issues for Soloist. The
+administrator), and needs the client key Spotify issues for Soloist. Soloist
+plays only for an account a Spotify app signed it into, so the first time,
+pick "Spotifast Lossless" once in the devices list of the Spotify app on your
+phone or computer, on the same network; lossless starts then and stays. The
 Winamp window shows FLC in place of the bitrate once the samples prove the
 audio lossless.
 Details: [how it connects](docs/_reference/how-it-connects.md#lossless-playback-through-soloist).

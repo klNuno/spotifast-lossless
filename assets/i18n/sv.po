@@ -3367,6 +3367,24 @@ msgstr ""
 "Spotify begränsar den delade appen just nu, så det här kan ta flera minuter. "
 "Med en personlig app loggar du in utan att vänta."
 
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr "Förlustfri är inte tillgänglig just nu, spelar i standardkvalitet."
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr "Förlustfri är parkopplad. Byter nu."
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr ""
+"Välj ”{name}” en gång bland enheterna i en Spotify-app på det här nätverket "
+"för att lyssna förlustfritt."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Kunde inte läsa in den här sektionen"
 

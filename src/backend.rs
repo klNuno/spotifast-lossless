@@ -641,6 +641,11 @@ pub enum Command {
     AuthorizePlayback,
     /// Reload the engine config (audio settings changed).
     RestartEngine(EngineConfig),
+    /// What the lossless pairing station `id` has to say.
+    Station {
+        id: u64,
+        event: crate::soloist::StationEvent,
+    },
     /// Keep Soloist's client key in protected storage; an empty key forgets
     /// it. Answered with [`Event::SoloistKey`].
     SaveSoloistKey(String),
@@ -845,6 +850,20 @@ pub struct LyricsRequest {
     pub query: crate::lyrics::Query,
 }
 
+/// What lossless playback tells the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LosslessNotice {
+    /// Lossless could not start; standard quality plays meanwhile.
+    Unavailable,
+    /// Lossless waits for a Spotify app to pick this computer once, listed
+    /// on the network under this name.
+    Pair(String),
+    /// The pairing station closed without a pairing.
+    PairingClosed,
+    /// A Spotify app paired it; lossless starts now.
+    Paired,
+}
+
 pub enum Event {
     ProxyRestored {
         config: ProxyConfig,
@@ -892,10 +911,9 @@ pub enum Event {
         color: [u8; 3],
     },
     Error(String),
-    /// A non-fatal notice for an informational toast. Used when the app keeps
-    /// working after a degraded path, such as lossless falling back to
-    /// standard playback, so the user is told without an error.
-    Notice(String),
+    /// What lossless playback has to tell the user while the app keeps
+    /// playing on standard quality.
+    Lossless(LosslessNotice),
     /// GitHub answered an update check, or the request failed.
     UpdateChecked {
         manual: bool,
@@ -1690,6 +1708,14 @@ struct Worker {
     /// instead of hanging on the Soloist handshake at every reconnect. Reset
     /// when the user applies playback settings or signs out.
     lossless_fallback: bool,
+    /// The fallback was for want of a pairing, which a Spotify app can give
+    /// through the pairing station.
+    lossless_unpaired: bool,
+    /// The pairing station, while lossless waits for a Spotify app to pick
+    /// this computer once.
+    station: Option<crate::soloist::Station>,
+    /// Numbers stations, so a closed one's last words are ignored.
+    station_id: u64,
     /// The account the last verified sign-in named, read at start.
     remembered_user: Option<User>,
     /// Signed in as the remembered account while the Web API has not named
@@ -1774,6 +1800,9 @@ impl Worker {
             authorize_if_rejected: false,
             engine_lossless_attempt: false,
             lossless_fallback: false,
+            lossless_unpaired: false,
+            station: None,
+            station_id: 0,
             remembered_user: None,
             unverified_account: None,
             playback_unconfirmed: false,
@@ -2075,8 +2104,10 @@ impl Worker {
                     // The user just chose their playback settings (lossless
                     // included): try lossless again rather than stay fallen back.
                     self.lossless_fallback = false;
+                    self.close_station();
                     self.replace_engine();
                 }
+                Command::Station { id, event } => self.on_station(id, event),
                 Command::SaveSoloistKey(key) => self.save_soloist_key(key),
                 Command::CheckSoloistKey => self.check_soloist_key(),
                 Command::ApplyProxy { request, config } => {
@@ -3221,6 +3252,7 @@ impl Worker {
         self.cancel_engine_retry();
         self.authorize_if_rejected = false;
         self.lossless_fallback = false;
+        self.close_station();
         self.remembered_user = None;
         self.unverified_account = None;
         self.playback_unconfirmed = false;
@@ -3671,6 +3703,76 @@ impl Worker {
         });
     }
 
+    /// Opens the pairing station once standard playback stands in for a
+    /// lossless that only lacks a pairing: a Spotify app on the network
+    /// picks it once, and lossless comes up from then on.
+    fn open_station(&mut self, user: String) {
+        if !self.lossless_fallback
+            || !self.lossless_unpaired
+            || self.station.is_some()
+            || user.is_empty()
+        {
+            return;
+        }
+        let Some(mut soloist) = self.engine_config.soloist.clone() else {
+            return;
+        };
+        self.station_id = self.station_id.wrapping_add(1);
+        let id = self.station_id;
+        let key = self.credentials.lease(CredentialSlot::Soloist);
+        let proxy = self.engine_config.proxy.clone();
+        let name = station_name(&self.engine_config.device_name);
+        let start = async move {
+            soloist.key = soloist_key(key).await?;
+            Ok(crate::soloist::StationStart {
+                config: soloist,
+                proxy,
+                name,
+                user,
+                network: true,
+            })
+        };
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        self.station = Some(crate::soloist::Station::open(start, move |event| {
+            let _ = commands.send(Command::Station { id, event });
+            waker.wake();
+        }));
+    }
+
+    /// Closes the pairing station, if one is open; the next start waits
+    /// for its Soloist to stop.
+    fn close_station(&mut self) {
+        self.lossless_unpaired = false;
+        if self.station.take().is_some() {
+            self.emit(Event::Lossless(LosslessNotice::PairingClosed));
+        }
+    }
+
+    fn on_station(&mut self, id: u64, event: crate::soloist::StationEvent) {
+        if id != self.station_id || self.station.is_none() {
+            return;
+        }
+        match event {
+            crate::soloist::StationEvent::Listed { name, .. } => {
+                self.emit(Event::Lossless(LosslessNotice::Pair(name)));
+            }
+            crate::soloist::StationEvent::Failed(_) => {
+                self.close_station();
+                self.emit(Event::Lossless(LosslessNotice::Unavailable));
+            }
+            crate::soloist::StationEvent::Paired => {
+                // Soloist kept the account and has stopped: lossless can
+                // start on it now.
+                self.station = None;
+                self.lossless_unpaired = false;
+                self.lossless_fallback = false;
+                self.emit(Event::Lossless(LosslessNotice::Paired));
+                self.replace_engine();
+            }
+        }
+    }
+
     fn on_engine_connected(
         &mut self,
         session_generation: u64,
@@ -3726,6 +3828,7 @@ impl Worker {
                     });
                 }
                 let device_id = engine.device_id().to_string();
+                let user = engine.session().username();
                 // librespot exits the process for any plan but Premium once it
                 // hears the plan, so a session still up that heard Premium
                 // confirms it.
@@ -3751,6 +3854,7 @@ impl Worker {
                 self.start_playlist_header_lookup();
                 self.start_radio();
                 self.start_prerelease();
+                self.open_station(user);
             }
             None => {
                 if self.engine_lossless_attempt
@@ -3762,16 +3866,20 @@ impl Worker {
                     // Spotify session can. Keep the music playing: reconnect on
                     // standard playback instead of leaving the user on silence,
                     // and say so. Sticky for the session so a reconnect does not
-                    // hang on the Soloist handshake again.
+                    // hang on the Soloist handshake again. When only a pairing
+                    // is missing, the pairing station opens once standard
+                    // playback is up, and says so itself.
                     log::warn!(
                         "lossless unavailable ({}); falling back to standard playback",
                         error.as_deref().unwrap_or("unknown")
                     );
                     self.lossless_fallback = true;
+                    self.lossless_unpaired =
+                        error.as_deref().is_some_and(crate::soloist::needs_pairing);
                     self.waiting_for_network = false;
-                    self.emit(Event::Notice(
-                        "Lossless unavailable right now, playing standard quality.".into(),
-                    ));
+                    if !self.lossless_unpaired {
+                        self.emit(Event::Lossless(LosslessNotice::Unavailable));
+                    }
                     self.resume_engine();
                     return;
                 }
@@ -4550,17 +4658,28 @@ async fn prepare_soloist(config: &mut EngineConfig, key: CredentialLease) -> any
     let Some(soloist) = config.soloist.as_mut() else {
         return Ok(());
     };
+    soloist.key = soloist_key(key).await?;
+    crate::soloist::install(soloist, &config.proxy).await
+}
+
+/// Soloist's client key, from protected storage.
+async fn soloist_key(key: CredentialLease) -> anyhow::Result<String> {
     let loaded = key
         .load()
         .await
         .map_err(|error| anyhow::anyhow!("Soloist's client key could not be read: {error}"))?;
     match loaded.grant {
-        Some(StoredGrant::Soloist(stored)) => soloist.key = stored.key,
+        Some(StoredGrant::Soloist(stored)) => Ok(stored.key),
         _ => anyhow::bail!(
             "Lossless playback needs Soloist's client key. Add it in Settings, or turn lossless off."
         ),
     }
-    crate::soloist::install(soloist, &config.proxy).await
+}
+
+/// What Spotify apps list the pairing station as: apart from the device
+/// standard playback shows under the same name meanwhile.
+fn station_name(device_name: &str) -> String {
+    format!("{} Lossless", device_name.trim())
 }
 
 fn friendly_connect_error(error: &anyhow::Error) -> String {
@@ -7842,7 +7961,7 @@ mod authorization_tests {
         worker.on_engine_connected(
             session,
             None,
-            Some("Spotify Soloist did not log in with this account".into()),
+            Some("Spotify Soloist did not start in time".into()),
             worker.engine_attempt,
         );
 
@@ -7855,15 +7974,96 @@ mod authorization_tests {
         );
         let notices = emitted
             .iter()
-            .filter(|event| matches!(event, Event::Notice(_)))
+            .filter(|event| matches!(event, Event::Lossless(LosslessNotice::Unavailable)))
             .count();
         assert_eq!(notices, 1, "fallback notice not shown exactly once");
         assert!(worker.lossless_fallback, "did not remember the fallback");
+        assert!(
+            !worker.lossless_unpaired,
+            "a Soloist that did not start was taken for a missing pairing"
+        );
         assert!(worker.engine_busy, "did not reconnect on standard playback");
         assert!(
             !worker.engine_lossless_attempt,
             "the fallback reconnect still asked for lossless"
         );
+    }
+
+    /// Lossless that only lacks a pairing falls back the same way, but
+    /// leaves the telling to the pairing station; once a Spotify app pairs
+    /// it, the fallback ends and lossless starts again.
+    #[test]
+    fn a_missing_pairing_waits_for_the_station_then_lossless_returns() {
+        let (runtime, mut worker, events) = worker("lossless-pairing");
+        let _entered = runtime.enter();
+        verify(&mut worker, ApiSource::Shared, "alice");
+        worker.engine_config.soloist = Some(crate::soloist::Config {
+            key: String::new(),
+            dir: worker.dirs.state.join("soloist"),
+        });
+        worker.playback_grant = Some(Credentials::with_password("alice", "dummy-grant"));
+        let session = worker.album_type_lookup.session_generation;
+        let _ = events.try_iter().count();
+
+        worker.connect_engine(Credentials::with_password("alice", "dummy-grant"));
+        worker.on_engine_connected(
+            session,
+            None,
+            Some(format!(
+                "{}: Spotify refused it before",
+                crate::soloist::NOT_PAIRED
+            )),
+            worker.engine_attempt,
+        );
+        assert!(worker.lossless_fallback && worker.lossless_unpaired);
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Lossless(_))),
+            "said lossless is unavailable while the station is about to open"
+        );
+
+        // Standard playback is up: the station opens. A stand-in that never
+        // starts plays its part here.
+        worker.engine_busy = false;
+        worker.station_id += 1;
+        let id = worker.station_id;
+        worker.station = Some(crate::soloist::Station::open(
+            std::future::pending::<anyhow::Result<crate::soloist::StationStart>>(),
+            |_| {},
+        ));
+        worker.on_station(id - 1, crate::soloist::StationEvent::Paired);
+        assert!(worker.lossless_fallback, "an old station's word was taken");
+        worker.on_station(
+            id,
+            crate::soloist::StationEvent::Listed {
+                name: "Spotifast Lossless".into(),
+                port: 50_000,
+            },
+        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::Lossless(LosslessNotice::Pair(name)) if name == "Spotifast Lossless"
+        )));
+
+        worker.on_station(id, crate::soloist::StationEvent::Paired);
+        assert!(worker.station.is_none());
+        assert!(!worker.lossless_fallback && !worker.lossless_unpaired);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Lossless(LosslessNotice::Paired)))
+        );
+        assert!(
+            worker.engine_busy && worker.engine_lossless_attempt,
+            "lossless did not start again after the pairing"
+        );
+    }
+
+    /// The station is named apart from the device standard playback shows.
+    #[test]
+    fn the_station_is_named_apart_from_the_device() {
+        assert_eq!(station_name(" Spotifast "), "Spotifast Lossless");
     }
 
     /// A non-Soloist failure (the Spotify session itself) is not treated as a

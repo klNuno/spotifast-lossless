@@ -3389,6 +3389,24 @@ msgstr ""
 "Spotify beperkt de gedeelde app op dit moment, dus dit kan minuten duren. "
 "Met een persoonlijke app meld je je meteen aan."
 
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr "Lossless is nu niet beschikbaar, afspelen in standaardkwaliteit."
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr "Lossless is gekoppeld. Er wordt nu overgeschakeld."
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr ""
+"Kies ‘{name}’ één keer bij de apparaten van een Spotify-app op dit netwerk "
+"om lossless te luisteren."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Kan deze rij niet laden"
 

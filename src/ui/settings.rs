@@ -560,14 +560,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         RowText::new(
             gettext(locale, "Audio quality"),
             if crate::soloist::AVAILABLE {
-                format!(
+                let mut text = format!(
                     "{quality_note} {}",
                     gettext(
                         locale,
                         "Lossless plays through Spotify Soloist, in FLAC when your plan includes it.",
                     )
-                )
-                .into()
+                );
+                // Until a Spotify app pairs it, lossless is one step away.
+                if let Some(name) = app.lossless_pairing.as_deref() {
+                    text = format!("{text} {}", locale.lossless_pairing_hint(name));
+                }
+                text.into()
             } else {
                 quality_note
             },

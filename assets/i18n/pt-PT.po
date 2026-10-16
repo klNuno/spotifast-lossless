@@ -3390,6 +3390,24 @@ msgstr ""
 "O Spotify está a limitar a app partilhada neste momento, por isso isto pode "
 "demorar minutos. Com uma app pessoal inicias sessão sem esperar."
 
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr "Sem perdas indisponível de momento, a reproduzir em qualidade padrão."
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr "Sem perdas emparelhado. A mudar agora."
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr ""
+"Para ouvir sem perdas, escolhe «{name}» uma vez nos dispositivos de uma app "
+"do Spotify nesta rede."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Não foi possível carregar esta secção"
 

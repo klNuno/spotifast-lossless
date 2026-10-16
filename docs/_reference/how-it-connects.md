@@ -540,7 +540,7 @@ connector. The change adds no destination or background polling.
 
 ## Lossless playback through Soloist
 
-With Settings → Playback → Lossless playback on, Spotify Soloist plays
+With Settings → Playback → Audio quality → Lossless, Spotify Soloist plays
 instead of librespot's player. Soloist is Spotify's own Connect receiver for
 Linux, and Spotify gives it FLAC on plans that include lossless. It needs a
 client key Spotify issues for it; Spotifast keeps the key in the system
@@ -550,8 +550,8 @@ credential store and passes it to Soloist on start.
   use, checks once a day whether a newer build is published, and replaces a
   build before its 90-day lifetime ends.
 - On Linux, Soloist runs as a child process and listens on loopback only: a
-  WebSocket API Spotifast drives it through, and a pairing endpoint
-  Spotifast uses once to hand it the playback account. It talks to Spotify
+  WebSocket API Spotifast drives it through, and a pairing endpoint a
+  Spotify app reaches only through the pairing station (below). It talks to Spotify
   itself, through the same proxy rules as the rest of the system.
 - Its audio comes back through `soloist/shim`, a stand-in `libpulse.so.0`
   that sends the stream over a loopback TCP port into Spotifast's own
@@ -605,11 +605,39 @@ Clearing the queue is not available while lossless playback is on.
 
 When Soloist cannot come up, because it fails to start or does not accept
 the account, and the Spotify session itself is fine, Spotifast plays at
-standard quality through librespot and says so once. It stays on standard
-quality for the rest of the session, so a reconnect does not wait on Soloist
-again; applying the playback settings or signing out tries lossless again.
-A pairing Spotify refused is remembered for that account and app version in
+standard quality through librespot. It stays on standard quality for the
+rest of the session, so a reconnect does not wait on Soloist again; applying
+the playback settings or signing out tries lossless again. A pairing Spotify
+refused is remembered for that account and app version in
 `soloist/refused`, so the next start does not wait on it.
+
+### Pairing Soloist from a Spotify app
+
+Soloist keeps an account only when Spotify's own controller signed it in:
+Spotify refuses the account Spotifast hands it. When that is all lossless
+lacks, Spotifast opens a pairing station once standard playback is up, and
+says what to do in a notice and under Settings → Playback → Audio quality:
+
+- A Soloist with no account runs, named after the device with "Lossless"
+  added ("Spotifast Lossless"), so Spotify apps list it apart from the
+  device standard playback shows.
+- Spotifast relays a port on every IPv4 interface to Soloist's pairing
+  endpoint, and announces it over mDNS as `_spotify-connect._tcp`
+  (`CPath=/zc`), like any Spotify Connect speaker. Windows asks once whether
+  Spotifast may use private networks. While the station is open, any Spotify
+  app on the network can sign an account into it.
+- Picking it once in a Spotify app on the same network signs Soloist in.
+  Spotifast reads the sign-in from Soloist's WebSocket API, never from
+  `getInfo`, which would replace the `authInfo` the app is pairing with.
+  Once the account is this one, the station withdraws the announcement,
+  closes the relay and stops Soloist, which keeps the session in its data.
+  Lossless then starts on it, and on every start after.
+- Another account signing in does not end the station. Applying the playback
+  settings, signing out, or Soloist stopping closes it; a station that stops
+  on its own says lossless is unavailable.
+
+One Soloist runs at a time, the station's included: they share Soloist's
+data, on Windows the machine's one data disk.
 
 ## Proxy
 

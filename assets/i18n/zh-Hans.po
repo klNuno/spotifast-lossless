@@ -3272,6 +3272,22 @@ msgid ""
 "personal app signs you in without waiting."
 msgstr "Spotify 目前正在限制共享应用，可能需要几分钟。使用个人应用可立即登录，无需等待。"
 
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr "无损暂时不可用，正在以标准音质播放。"
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr "无损已配对，正在切换。"
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr "要播放无损，请在此网络中任一 Spotify 应用的设备列表里选择一次“{name}”。"
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "无法加载此栏目"
 

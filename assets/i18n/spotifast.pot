@@ -3257,3 +3257,19 @@ msgid ""
 "Spotify is limiting the shared app right now, so this can take minutes. A "
 "personal app signs you in without waiting."
 msgstr ""
+
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr ""
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr ""
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr ""

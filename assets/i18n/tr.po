@@ -3391,6 +3391,24 @@ msgstr ""
 "Spotify şu anda paylaşılan uygulamayı sınırlıyor, bu yüzden bu işlem "
 "dakikalar sürebilir. Kişisel bir uygulamayla beklemeden oturum açarsınız."
 
+#: src/app.rs:10851
+msgid "Lossless unavailable right now, playing standard quality."
+msgstr "Kayıpsız şu anda kullanılamıyor, standart kalitede çalıyor."
+
+#: src/app.rs:10860
+msgid "Lossless is paired. Switching to it now."
+msgstr "Kayıpsız eşleştirildi. Şimdi geçiliyor."
+
+#. Translators: Keep {name} exactly as written. It becomes the name a Spotify
+#. app lists this computer under, such as "Spotifast Lossless".
+#: src/i18n.rs:241
+msgid ""
+"To play lossless, pick “{name}” once in a Spotify app's devices on this "
+"network."
+msgstr ""
+"Kayıpsız dinlemek için bu ağdaki bir Spotify uygulamasının cihazlarında "
+"“{name}” öğesini bir kez seçin."
+
 #~ msgid "Couldn't load this shelf"
 #~ msgstr "Bu bölüm yüklenemedi"
 
