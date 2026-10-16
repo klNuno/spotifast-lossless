@@ -23,6 +23,9 @@ Spotifast follows each platform's conventions. On Linux:
 | Proxy password | System credential store | Clear the password and apply the manual proxy settings |
 | Soloist client key | System credential store | Remove it in Settings → Playback |
 | Spotify Soloist, its libraries and its data | `~/.local/state/spotifast/soloist/` | Yes while lossless is off; Soloist downloads again and asks for no new sign-in |
+| Soloist pairing refused for an account | `~/.local/state/spotifast/soloist/refused` | Yes; lossless tries pairing again |
+| Last verified account, no credential | `~/.local/state/spotifast/account.json` | Yes; the next start waits for Spotify to name the account |
+| Plan check pending for the remembered account | `~/.local/state/spotifast/playback-unconfirmed` | Yes; the next start waits for the plan check |
 | Legacy proxy password | `~/.local/state/spotifast/proxy_password` | Removed after protected migration |
 | Last session | `~/.local/state/spotifast/session.json` | Yes |
 | Play history | `~/.local/state/spotifast/history.json` | Yes |

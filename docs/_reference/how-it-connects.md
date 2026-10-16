@@ -66,6 +66,21 @@ is read this way once it does. Until the Web API lists them again, another
 person's playlist shows its owner's Spotify ID rather than a display name,
 and the public flag stays unknown.
 
+While local playback plays on this computer, the queue is not asked of the
+Web API. Spirc publishes the player state it sends Spotify's Connect state
+service, the same list the Web API's queue reads back, and Spotifast reads
+the playing song and up to twenty after it from there, with their details in
+one metadata batch over the playback session. Songs librespot found
+unavailable and its end-of-context marker are left out. When another device
+plays, or the details cannot be read, the Web API answers as before.
+
+A restart signs in as the account the last verified sign-in named, kept in
+`account.json`, and starts local playback before the Web API answers again.
+That needs a stored Web grant and playback credential for the same Premium
+account. Until the engine or the Web API confirms the plan, a marker file
+makes the next start wait instead. If the Web API names another account, or
+refuses the grant, the remembered sign-in ends and playback stops.
+
 Web API sign-in opens the browser only after its local callback port is available. If
 port 8989 is occupied, the sign-in screen keeps the error visible. Close the
 app using that port, then choose **Try again**. Since 0.13.2, playback setup
@@ -587,6 +602,14 @@ credential store and passes it to Soloist on start.
   machine trusts Mozilla's root certificates and any others Windows trusts.
 
 Clearing the queue is not available while lossless playback is on.
+
+When Soloist cannot come up, because it fails to start or does not accept
+the account, and the Spotify session itself is fine, Spotifast plays at
+standard quality through librespot and says so once. It stays on standard
+quality for the rest of the session, so a reconnect does not wait on Soloist
+again; applying the playback settings or signing out tries lossless again.
+A pairing Spotify refused is remembered for that account and app version in
+`soloist/refused`, so the next start does not wait on it.
 
 ## Proxy
 
