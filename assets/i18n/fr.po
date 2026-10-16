@@ -3426,7 +3426,7 @@ msgid ""
 "To play lossless, pick “{name}” once in a Spotify app's devices on this "
 "network."
 msgstr ""
-"Pour écouter sans perte, choisissez « {name} » une fois dans les appareils "
+"Pour écouter sans perte, choisissez « {name} » une fois dans les appareils "
 "d’une app Spotify sur ce réseau."
 
 #~ msgid "Couldn't load this shelf"
