@@ -2126,6 +2126,7 @@ impl App {
                     result,
                 } => self.handle_proxy_applied(request, config, result),
                 Event::Error(message) => self.toast_error(message),
+                Event::Notice(message) => self.toast(message),
                 Event::Rootlist { result } => match result {
                     Ok(rootlist) => {
                         let account_id = self.user_id().map(str::to_owned).or_else(|| {

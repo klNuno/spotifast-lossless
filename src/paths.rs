@@ -89,6 +89,18 @@ impl AppDirs {
         self.state.join("panic.log")
     }
 
+    /// The account the last verified sign-in named, so a restart shows it
+    /// and starts playback before Spotify answers again. No credential.
+    pub fn account_file(&self) -> PathBuf {
+        self.state.join("account.json")
+    }
+
+    /// Present while an engine started on the remembered account has not
+    /// confirmed the account's plan yet.
+    pub fn playback_unconfirmed_file(&self) -> PathBuf {
+        self.state.join("playback-unconfirmed")
+    }
+
     pub fn credentials_dir(&self) -> PathBuf {
         self.state.join("credentials")
     }

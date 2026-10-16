@@ -90,8 +90,12 @@ pub(crate) const LIBRARIES: [(&str, &[u8]); 2] = [
 
 /// How long Soloist may take to open its ports.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long a new pairing may take to log in.
+/// How long a kept account may take to log in on start.
 const PAIR_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long to wait for a fresh pairing to log in before giving up. A
+/// loopback pairing that works confirms in well under a second; the short
+/// deadline keeps lossless from feeling frozen before it falls back.
+const PAIR_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Everything [`Soloist::start`] needs.
 pub(crate) struct Start {
@@ -204,8 +208,18 @@ impl Soloist {
                 let Some(credentials) = &pairing else {
                     bail!("Spotify Soloist has no account yet");
                 };
+                if refused_before(&config.dir, &credentials.username) {
+                    log::info!(
+                        "soloist: this account's pairing was refused before; not waiting on it"
+                    );
+                    bail!("Spotify Soloist did not log in with this account");
+                }
                 pair(ports.pairing, &info, credentials, &device_name).await?;
-                wait_user(ports.pairing, &credentials.username).await?;
+                if let Err(error) = wait_user(ports.pairing, &credentials.username).await {
+                    remember_refused(&config.dir, &credentials.username);
+                    return Err(error);
+                }
+                forget_refused(&config.dir);
                 // Soloist wrote the new account's preferences when it
                 // logged in; they take effect on its next start.
                 if let Some(mut process) = process.take() {
@@ -378,7 +392,7 @@ async fn wait_logged_in(state: &Mutex<crate::player::LocalState>) -> Result<()> 
 
 /// Waits until Soloist reports `user` as its account, after a pairing.
 async fn wait_user(port: u16, user: &str) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + PAIR_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + PAIR_CONFIRM_TIMEOUT;
     while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(250)).await;
         if pairing_info(port)
@@ -389,6 +403,63 @@ async fn wait_user(port: u16, user: &str) -> Result<()> {
         }
     }
     bail!("Spotify Soloist did not log in with this account")
+}
+
+/// Where Soloist's refusal of an account's pairing is kept, so the next
+/// start does not wait on a pairing that cannot work. Soloist only takes
+/// an account Spotify's own controller paired; that does not change
+/// between starts of the same Spotifast.
+fn refused_file(dir: &Path) -> PathBuf {
+    dir.join("refused")
+}
+
+fn refusal(user: &str) -> String {
+    format!("{}\n{}\n", user.to_lowercase(), env!("CARGO_PKG_VERSION"))
+}
+
+/// Whether this Spotifast already saw Soloist refuse `user`. A new version
+/// tries again.
+fn refused_before(dir: &Path, user: &str) -> bool {
+    std::fs::read_to_string(refused_file(dir)).is_ok_and(|kept| kept == refusal(user))
+}
+
+fn remember_refused(dir: &Path, user: &str) {
+    if let Err(error) = install::write_atomically(&refused_file(dir), refusal(user).as_bytes()) {
+        log::warn!("soloist: unable to remember the refused pairing: {error}");
+    }
+}
+
+fn forget_refused(dir: &Path) {
+    let _ = std::fs::remove_file(refused_file(dir));
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    /// A refused pairing is not waited on again by the same Spotifast for
+    /// the same account; another account, or a pairing that worked, clears it.
+    #[test]
+    fn a_refused_pairing_is_remembered_for_its_account() {
+        let dir =
+            std::env::temp_dir().join(format!("spotifast-soloist-refused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        assert!(!refused_before(&dir, "alice"));
+        remember_refused(&dir, "Alice");
+        assert!(refused_before(&dir, "alice"));
+        assert!(!refused_before(&dir, "bob"));
+        std::fs::write(refused_file(&dir), "alice\n0.0.1\n").unwrap();
+        assert!(
+            !refused_before(&dir, "alice"),
+            "an older Spotifast's refusal held"
+        );
+        remember_refused(&dir, "alice");
+        forget_refused(&dir);
+        assert!(!refused_before(&dir, "alice"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Soloist, ready to start, and where its data is from Spotifast's side

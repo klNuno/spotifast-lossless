@@ -610,6 +610,14 @@ pub enum Command {
         lease: CredentialLease,
         result: Result<crate::credentials::Loaded, crate::credentials::Error>,
     },
+    /// The account the last verified sign-in left, read at start for the
+    /// stored playback grant's account, and whether an engine started on it
+    /// before never confirmed the plan.
+    AccountRemembered {
+        lease: CredentialLease,
+        user: Option<Box<User>>,
+        unconfirmed: bool,
+    },
     CheckPlaylistCover {
         id: String,
         request: u64,
@@ -884,6 +892,10 @@ pub enum Event {
         color: [u8; 3],
     },
     Error(String),
+    /// A non-fatal notice for an informational toast. Used when the app keeps
+    /// working after a degraded path, such as lossless falling back to
+    /// standard playback, so the user is told without an error.
+    Notice(String),
     /// GitHub answered an update check, or the request failed.
     UpdateChecked {
         manual: bool,
@@ -1670,6 +1682,25 @@ struct Worker {
     /// The user asked to set up playback and the saved grant is being tried
     /// first. Only Spotify rejecting it opens the browser.
     authorize_if_rejected: bool,
+    /// The engine connection in flight was asked to come up as lossless
+    /// (Soloist). Read when it finishes to know a Soloist failure can fall
+    /// back to standard playback.
+    engine_lossless_attempt: bool,
+    /// Lossless could not come up this session, so stay on standard playback
+    /// instead of hanging on the Soloist handshake at every reconnect. Reset
+    /// when the user applies playback settings or signs out.
+    lossless_fallback: bool,
+    /// The account the last verified sign-in named, read at start.
+    remembered_user: Option<User>,
+    /// Signed in as the remembered account while the Web API has not named
+    /// it yet: the shared app's quota is divided among everyone using it, so
+    /// its answer can take minutes, and the playback grant needs none of it.
+    unverified_account: Option<String>,
+    /// An engine came up before the account's plan was confirmed and the
+    /// confirmation is still owed. librespot exits the process for a Free
+    /// account, so while this is left over from a previous run, a start
+    /// waits for the Web API instead.
+    playback_unconfirmed: bool,
 }
 
 impl Worker {
@@ -1741,6 +1772,11 @@ impl Worker {
             engine_retry_generation: 0,
             engine_retry_quiet: false,
             authorize_if_rejected: false,
+            engine_lossless_attempt: false,
+            lossless_fallback: false,
+            remembered_user: None,
+            unverified_account: None,
+            playback_unconfirmed: false,
         }
     }
 
@@ -1925,6 +1961,15 @@ impl Worker {
                     lease,
                     result,
                 } => self.on_credentials_restored(slot, lease, result),
+                Command::AccountRemembered {
+                    lease,
+                    user,
+                    unconfirmed,
+                } => {
+                    if lease.current() {
+                        self.on_account_remembered(user.map(|user| *user), unconfirmed);
+                    }
+                }
                 Command::CheckPlaylistCover {
                     id,
                     request,
@@ -2010,6 +2055,12 @@ impl Worker {
                     for dir in self.dirs.account_snapshot_dirs() {
                         log_cache_removal(&dir, tokio::fs::remove_dir_all(&dir).await);
                     }
+                    for file in [
+                        self.dirs.account_file(),
+                        self.dirs.playback_unconfirmed_file(),
+                    ] {
+                        log_cache_removal(&file, tokio::fs::remove_file(&file).await);
+                    }
                     let purge = PlaylistCacheJob::Purge(self.dirs.playlist_cache_dir());
                     if cache_writes.send(purge).await.is_err() {
                         log::warn!("unable to remove the playlist caches: writer unavailable");
@@ -2021,6 +2072,9 @@ impl Worker {
                     // acknowledgement was still in flight when this was clicked.
                     config.proxy = self.engine_config.proxy.clone();
                     self.engine_config = config;
+                    // The user just chose their playback settings (lossless
+                    // included): try lossless again rather than stay fallen back.
+                    self.lossless_fallback = false;
                     self.replace_engine();
                 }
                 Command::SaveSoloistKey(key) => self.save_soloist_key(key),
@@ -2636,6 +2690,9 @@ impl Worker {
         };
         match grant {
             Some(StoredGrant::Playback(grant)) => {
+                if let Some(account) = grant.username.clone().filter(|name| !name.is_empty()) {
+                    self.read_remembered_account(lease.clone(), account);
+                }
                 self.playback_grant = Some(grant);
                 self.resume_engine();
             }
@@ -2653,6 +2710,7 @@ impl Worker {
                             self.emit(Event::Auth(AuthStatus::Connecting));
                         }
                         self.on_web_signed_in(source, token);
+                        self.sign_in_remembered();
                     } else {
                         // Signing in renews only the shared app's grant, so a
                         // personal app has to be authorized again where it was
@@ -2685,6 +2743,98 @@ impl Worker {
         {
             self.emit(Event::Auth(AuthStatus::SignedOut));
         }
+    }
+
+    /// Reads who the last verified sign-in was, if it was the playback
+    /// grant's account, and whether a start before this one never confirmed
+    /// that account's plan.
+    fn read_remembered_account(&self, lease: CredentialLease, account: String) {
+        let file = self.dirs.account_file();
+        let marker = self.dirs.playback_unconfirmed_file();
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            let user = crate::account_cache::read::<User>(&file, &account).await;
+            let unconfirmed = tokio::fs::try_exists(&marker).await.unwrap_or(true);
+            let _ = commands.send(Command::AccountRemembered {
+                lease,
+                user: user.map(Box::new),
+                unconfirmed,
+            });
+        });
+    }
+
+    fn on_account_remembered(&mut self, user: Option<User>, unconfirmed: bool) {
+        if unconfirmed {
+            if self.signed_in && self.unverified_account.is_none() && self.premium == Some(true) {
+                // The Web API confirmed the plan before this was read.
+                remove_unconfirmed_marker(self.dirs.playback_unconfirmed_file());
+            } else {
+                self.playback_unconfirmed = true;
+            }
+        }
+        self.remembered_user = user;
+        self.sign_in_remembered();
+    }
+
+    /// Signs in as the account the last verified sign-in named, while the
+    /// Web API names it again, and starts playback on the stored grant. Only
+    /// for a Premium account, with a Web API grant to confirm it, and not
+    /// after a start that never confirmed the plan: librespot exits the
+    /// process for a Free account.
+    fn sign_in_remembered(&mut self) {
+        if self.signed_in
+            || self.playback_unconfirmed
+            || self.web_tokens.iter().all(Option::is_none)
+        {
+            return;
+        }
+        let Some(user) = self.remembered_user.clone() else {
+            return;
+        };
+        let grant_matches = self
+            .playback_grant
+            .as_ref()
+            .is_some_and(|grant| grant.username.as_deref() == Some(user.id.as_str()));
+        if user.id.is_empty() || !grant_matches || user.product.as_deref() != Some("premium") {
+            return;
+        }
+        log::info!("signed in as the remembered account while Spotify confirms it");
+        self.signed_in = true;
+        self.unverified_account = Some(user.id.clone());
+        self.premium = Some(true);
+        self.emit(Event::Auth(AuthStatus::Connected {
+            username: user.name().to_string(),
+        }));
+        self.emit(Event::Api(Box::new(ApiResponse::Me(Ok(user)))));
+        self.resume_engine();
+    }
+
+    /// The account playback runs as: the one the Web API verified, or the
+    /// remembered one while the Web API has not answered.
+    fn playback_account(&self) -> Option<AccountId> {
+        self.api
+            .account()
+            .or_else(|| self.unverified_account.clone().map(AccountId::new))
+    }
+
+    /// The account's plan is Premium, so a later start may come up on the
+    /// remembered account again.
+    fn confirm_playback_plan(&mut self) {
+        if std::mem::take(&mut self.playback_unconfirmed) {
+            remove_unconfirmed_marker(self.dirs.playback_unconfirmed_file());
+        }
+    }
+
+    /// The sign-in shown from the remembered account did not hold: the Web
+    /// API named another account or refused the grant. What played on it
+    /// stops.
+    fn drop_remembered_session(&mut self) {
+        self.signed_in = false;
+        self.carry_volume();
+        if let Some(engine) = self.engine.take() {
+            engine.shutdown();
+        }
+        self.emit(Event::Playback(LocalPlayback::Unavailable));
     }
 
     fn storage_notice(
@@ -2806,6 +2956,9 @@ impl Worker {
         };
         if source == ApiSource::Shared || !other_ready {
             self.signed_in = false;
+            if self.unverified_account.take().is_some() {
+                self.drop_remembered_session();
+            }
             self.emit(Event::Auth(AuthStatus::Failed(message.clone())));
         }
         self.emit(Event::Error(message));
@@ -2829,12 +2982,27 @@ impl Worker {
             return;
         }
         if let Some(tokens) = self.web_tokens[web_slot(source).index()].clone() {
-            let notice = self.storage_notice(self.credentials.lease(web_slot(source)));
+            let lease = self.credentials.lease(web_slot(source));
+            let notice = self.storage_notice(lease.clone());
+            let file = self.dirs.account_file();
+            let remembered = crate::account_cache::Cache::new(user.id.clone(), user.clone());
             tokio::spawn(async move {
                 if let Err(error) = tokens.remember().await {
                     notice(error);
                 }
+                if lease.current()
+                    && let Err(error) = crate::account_cache::write(&file, &remembered).await
+                {
+                    log::warn!("unable to remember the signed-in account: {error}");
+                }
             });
+        }
+        // Signed in as the remembered account until now. Another account
+        // answering means what was shown and played was not this one.
+        let unverified = self.unverified_account.take();
+        let confirming = unverified.is_some();
+        if unverified.is_some_and(|account| account != user.id) {
+            self.drop_remembered_session();
         }
         match source {
             ApiSource::Shared => {
@@ -2852,11 +3020,13 @@ impl Worker {
                 self.emit(Event::WebApp {
                     client_id: Some(token.client_id),
                 });
-                if !self.signed_in {
-                    self.signed_in = true;
-                    self.emit(Event::Auth(AuthStatus::Connected {
-                        username: user.name().to_string(),
-                    }));
+                if !self.signed_in || confirming {
+                    if !self.signed_in {
+                        self.signed_in = true;
+                        self.emit(Event::Auth(AuthStatus::Connected {
+                            username: user.name().to_string(),
+                        }));
+                    }
                     self.emit(Event::Api(Box::new(ApiResponse::Me(Ok(user.clone())))));
                     let premium = user.product.as_deref().map(|product| product == "premium");
                     self.on_account_checked(premium);
@@ -3050,6 +3220,10 @@ impl Worker {
         self.waiting_for_network = false;
         self.cancel_engine_retry();
         self.authorize_if_rejected = false;
+        self.lossless_fallback = false;
+        self.remembered_user = None;
+        self.unverified_account = None;
+        self.playback_unconfirmed = false;
         self.album_type_lookup.reset_session();
         self.audiobook_lookup.clear();
         self.playlist_header_lookup.clear_engine_work();
@@ -3127,7 +3301,10 @@ impl Worker {
                 return;
             }
             if credentials.username.as_deref()
-                != self.api.account().as_ref().map(|account| account.as_str())
+                != self
+                    .playback_account()
+                    .as_ref()
+                    .map(|account| account.as_str())
             {
                 self.pending_playback_grant = None;
                 self.emit(Event::Playback(LocalPlayback::Failed(
@@ -3400,7 +3577,21 @@ impl Worker {
             self.emit(Event::Playback(LocalPlayback::Connecting));
         }
         let lease = self.credentials.lease(CredentialSlot::Playback);
-        let config = self.engine_config.clone();
+        let mut config = self.engine_config.clone();
+        // Lossless already failed to come up this session: stay on standard
+        // playback rather than hang on the Soloist handshake again.
+        if self.lossless_fallback {
+            config.soloist = None;
+        }
+        self.engine_lossless_attempt = config.soloist.is_some();
+        // Coming up on the remembered account, before the Web API said the
+        // plan is Premium: note it first, so a Free account that librespot
+        // exits on makes the next start wait for the Web API.
+        let unconfirmed = (self.unverified_account.is_some() && !self.playback_unconfirmed)
+            .then(|| self.dirs.playback_unconfirmed_file());
+        if unconfirmed.is_some() {
+            self.playback_unconfirmed = true;
+        }
         let proxy = config.proxy.librespot_url();
         self.engine_proxy = proxy.clone();
         let notify = self.engine_notify();
@@ -3411,6 +3602,14 @@ impl Worker {
         let soloist_key = self.credentials.lease(CredentialSlot::Soloist);
         tokio::spawn(async move {
             let mut config = config;
+            if let Some(marker) = unconfirmed {
+                let written =
+                    tokio::task::spawn_blocking(move || fastframe_file::write(&marker, Vec::new()))
+                        .await;
+                if !matches!(written, Ok(Ok(()))) {
+                    log::warn!("unable to note a playback start before the plan is confirmed");
+                }
+            }
             let prepared = match config.open_cache() {
                 Ok(cache) => prepare_soloist(&mut config, soloist_key)
                     .await
@@ -3510,7 +3709,7 @@ impl Worker {
                 self.pending_playback_grant = None;
                 self.cancel_engine_retry();
                 if let Some(grant) = engine.credentials() {
-                    if !playback_account_matches(&grant, self.api.account()) {
+                    if !playback_account_matches(&grant, self.playback_account()) {
                         engine.shutdown();
                         self.fail_waiting_prerelease("Playback was authorized for another Spotify account. Enable playback again with the signed-in account.");
                         self.emit(Event::Playback(LocalPlayback::Failed("Playback was authorized for another Spotify account. Enable playback again with the signed-in account.".into())));
@@ -3527,6 +3726,12 @@ impl Worker {
                     });
                 }
                 let device_id = engine.device_id().to_string();
+                // librespot exits the process for any plan but Premium once it
+                // hears the plan, so a session still up that heard Premium
+                // confirms it.
+                if engine.session().get_user_attribute("type").as_deref() == Some("premium") {
+                    self.confirm_playback_plan();
+                }
                 let engine = Arc::new(engine);
                 self.heard = Some(engine.heard());
                 if let Some(spec) = self.resume.take() {
@@ -3548,6 +3753,28 @@ impl Worker {
                 self.start_prerelease();
             }
             None => {
+                if self.engine_lossless_attempt
+                    && !self.lossless_fallback
+                    && self.network_reachable
+                    && is_soloist_unavailable(error.as_deref())
+                {
+                    // The Soloist (lossless) layer could not come up, but the
+                    // Spotify session can. Keep the music playing: reconnect on
+                    // standard playback instead of leaving the user on silence,
+                    // and say so. Sticky for the session so a reconnect does not
+                    // hang on the Soloist handshake again.
+                    log::warn!(
+                        "lossless unavailable ({}); falling back to standard playback",
+                        error.as_deref().unwrap_or("unknown")
+                    );
+                    self.lossless_fallback = true;
+                    self.waiting_for_network = false;
+                    self.emit(Event::Notice(
+                        "Lossless unavailable right now, playing standard quality.".into(),
+                    ));
+                    self.resume_engine();
+                    return;
+                }
                 if !self.network_reachable {
                     self.waiting_for_network = true;
                     self.emit(Event::Playback(LocalPlayback::WaitingForNetwork));
@@ -3599,6 +3826,9 @@ impl Worker {
     /// unknown, preserve the previous behavior and start the engine.
     fn on_account_checked(&mut self, premium: Option<bool>) {
         self.premium = premium;
+        if premium == Some(true) {
+            self.confirm_playback_plan();
+        }
         if premium == Some(false) {
             self.album_type_lookup.clear_engine_work();
             self.playlist_header_lookup.clear_engine_work();
@@ -4356,6 +4586,15 @@ fn is_rejected_grant(error: Option<&str>) -> bool {
             || lower.contains("bad credentials")
             || lower.contains("rejected the saved sign-in")
     })
+}
+
+/// The lossless (Soloist) layer itself failed to come up, as opposed to the
+/// Spotify session or the saved grant. The Spotify session still works, so the
+/// engine can fall back to standard playback instead of going silent. Soloist
+/// start and pairing failures all name "Soloist"; a session or credential
+/// failure does not, and would break standard playback too.
+fn is_soloist_unavailable(error: Option<&str>) -> bool {
+    error.is_some_and(|msg| msg.to_lowercase().contains("soloist"))
 }
 
 fn is_terminal_credential_error(error: Option<&str>) -> bool {
@@ -5515,6 +5754,13 @@ fn log_cache_removal(path: &std::path::Path, result: std::io::Result<()>) {
     {
         log::warn!("unable to remove {}: {error}", path.display());
     }
+}
+
+/// Forgets that an engine came up before its account's plan was confirmed.
+fn remove_unconfirmed_marker(path: std::path::PathBuf) {
+    tokio::spawn(async move {
+        log_cache_removal(&path, tokio::fs::remove_file(&path).await);
+    });
 }
 
 /// Removes every account's cached playlist pages. Each account's pages are
@@ -7459,6 +7705,238 @@ mod authorization_tests {
         );
         assert!(worker.waiting_for_network);
         assert_eq!(worker.engine_retries, 0);
+    }
+
+    /// Lossless failing to come up does not go silent: the engine falls back
+    /// to standard playback, says so once, and stays fallen back so the next
+    /// reconnect does not hang on the Soloist handshake again.
+    #[test]
+    fn lossless_failure_falls_back_to_standard_playback() {
+        let (runtime, mut worker, events) = worker("lossless-fallback");
+        let _entered = runtime.enter();
+        verify(&mut worker, ApiSource::Shared, "alice");
+        worker.engine_config.soloist = Some(crate::soloist::Config {
+            key: String::new(),
+            dir: worker.dirs.state.join("soloist"),
+        });
+        worker.playback_grant = Some(Credentials::with_password("alice", "dummy-grant"));
+        let session = worker.album_type_lookup.session_generation;
+        let _ = events.try_iter().count();
+
+        worker.connect_engine(Credentials::with_password("alice", "dummy-grant"));
+        assert!(
+            worker.engine_lossless_attempt,
+            "attempt not marked lossless"
+        );
+        worker.on_engine_connected(
+            session,
+            None,
+            Some("Spotify Soloist did not log in with this account".into()),
+            worker.engine_attempt,
+        );
+
+        let emitted: Vec<_> = events.try_iter().collect();
+        assert!(
+            !emitted
+                .iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Failed(_)))),
+            "lossless failure surfaced as an error instead of falling back"
+        );
+        let notices = emitted
+            .iter()
+            .filter(|event| matches!(event, Event::Notice(_)))
+            .count();
+        assert_eq!(notices, 1, "fallback notice not shown exactly once");
+        assert!(worker.lossless_fallback, "did not remember the fallback");
+        assert!(worker.engine_busy, "did not reconnect on standard playback");
+        assert!(
+            !worker.engine_lossless_attempt,
+            "the fallback reconnect still asked for lossless"
+        );
+    }
+
+    /// A non-Soloist failure (the Spotify session itself) is not treated as a
+    /// lossless problem: it keeps the existing retry behaviour, no fallback.
+    #[test]
+    fn session_failure_during_lossless_is_not_a_fallback() {
+        let (runtime, mut worker, events) = worker("lossless-session-failure");
+        let _entered = runtime.enter();
+        verify(&mut worker, ApiSource::Shared, "alice");
+        worker.engine_config.soloist = Some(crate::soloist::Config {
+            key: String::new(),
+            dir: worker.dirs.state.join("soloist"),
+        });
+        worker.playback_grant = Some(Credentials::with_password("alice", "dummy-grant"));
+        let session = worker.album_type_lookup.session_generation;
+        let _ = events.try_iter().count();
+
+        worker.connect_engine(Credentials::with_password("alice", "dummy-grant"));
+        worker.on_engine_connected(
+            session,
+            None,
+            Some("Couldn't reach Spotify: connection reset".into()),
+            worker.engine_attempt,
+        );
+        assert!(
+            !worker.lossless_fallback,
+            "a session error forced a fallback"
+        );
+        assert_eq!(worker.engine_retries, 1, "the saved grant was not retried");
+    }
+
+    fn remembered(product: &str) -> User {
+        User {
+            id: "alice".into(),
+            display_name: Some("Alice".into()),
+            product: Some(product.into()),
+            ..Default::default()
+        }
+    }
+
+    /// A restart with both grants stored, as after any earlier sign-in.
+    fn restarted(
+        name: &str,
+    ) -> (
+        tokio::runtime::Runtime,
+        Worker,
+        std::sync::mpsc::Receiver<Event>,
+    ) {
+        let (runtime, mut worker, events) = worker(name);
+        {
+            let _entered = runtime.enter();
+            worker.on_web_signed_in(
+                ApiSource::Shared,
+                crate::auth::StoredToken {
+                    client_id: crate::auth::DEFAULT_WEB_CLIENT_ID.into(),
+                    access_token: "dummy-access".into(),
+                    refresh_token: "dummy-refresh".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        worker.playback_grant = Some(Credentials::with_password("alice", "dummy-grant"));
+        let _ = events.try_iter().count();
+        (runtime, worker, events)
+    }
+
+    /// A restart does not wait on the shared app to name the account: it
+    /// shows the account the last sign-in verified and starts playback on
+    /// the stored grant at once. The Web API's answer then confirms it
+    /// without signing in a second time.
+    #[test]
+    fn restart_signs_in_as_the_remembered_account_before_the_web_api_answers() {
+        let (runtime, mut worker, events) = restarted("remembered-sign-in");
+        let _entered = runtime.enter();
+
+        worker.on_account_remembered(Some(remembered("premium")), false);
+
+        assert!(worker.signed_in, "waited for the Web API");
+        assert_eq!(worker.unverified_account.as_deref(), Some("alice"));
+        assert!(
+            worker.engine_busy,
+            "playback did not start on the stored grant"
+        );
+        assert!(
+            worker.playback_unconfirmed,
+            "the plan was not marked unconfirmed"
+        );
+        let emitted: Vec<_> = events.try_iter().collect();
+        assert!(emitted.iter().any(|event| matches!(event,
+            Event::Auth(AuthStatus::Connected { username }) if username == "Alice")));
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, Event::Api(response)
+            if matches!(response.as_ref(), ApiResponse::Me(Ok(user)) if user.id == "alice")))
+        );
+
+        verify(&mut worker, ApiSource::Shared, "alice");
+        assert!(worker.signed_in);
+        assert!(worker.unverified_account.is_none());
+        assert!(
+            !worker.playback_unconfirmed,
+            "Premium did not confirm the plan"
+        );
+        assert_eq!(worker.playback_account(), Some(AccountId::new("alice")));
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Auth(AuthStatus::Connected { .. }))),
+            "the confirmation signed in a second time"
+        );
+    }
+
+    /// librespot exits the process for a Free account. A start that came
+    /// up on the remembered account and never confirmed the plan, or a
+    /// remembered plan that is not Premium, waits for the Web API.
+    #[test]
+    fn remembered_sign_in_waits_when_the_plan_is_unconfirmed_or_not_premium() {
+        for (name, product, unconfirmed) in [
+            ("remembered-unconfirmed", "premium", true),
+            ("remembered-free", "free", false),
+        ] {
+            let (runtime, mut worker, events) = restarted(name);
+            let _entered = runtime.enter();
+            worker.on_account_remembered(Some(remembered(product)), unconfirmed);
+            assert!(!worker.signed_in, "{name}: signed in before the Web API");
+            assert!(!worker.engine_busy, "{name}: started playback");
+            assert!(
+                !events
+                    .try_iter()
+                    .any(|event| matches!(event, Event::Auth(AuthStatus::Connected { .. })))
+            );
+        }
+    }
+
+    /// The remembered account is not the one the Web API names: what was
+    /// shown and played stops, and the app signs in as the named account.
+    #[test]
+    fn another_account_answering_replaces_the_remembered_sign_in() {
+        let (runtime, mut worker, events) = restarted("remembered-other-account");
+        let _entered = runtime.enter();
+        worker.on_account_remembered(Some(remembered("premium")), false);
+        let _ = events.try_iter().count();
+
+        verify(&mut worker, ApiSource::Shared, "bob");
+        assert!(worker.signed_in);
+        assert!(worker.unverified_account.is_none());
+        assert_eq!(worker.playback_account(), Some(AccountId::new("bob")));
+        let emitted: Vec<_> = events.try_iter().collect();
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Unavailable)))
+        );
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, Event::Auth(AuthStatus::Connected { .. }))),
+            "did not sign in as the account the Web API named"
+        );
+    }
+
+    /// Spotify refusing the Web API grant ends the remembered sign-in too.
+    #[test]
+    fn refused_web_grant_ends_the_remembered_sign_in() {
+        let (runtime, mut worker, events) = restarted("remembered-refused");
+        let _entered = runtime.enter();
+        worker.on_account_remembered(Some(remembered("premium")), false);
+        let _ = events.try_iter().count();
+
+        worker.on_web_verification_failed(ApiSource::Shared, ApiError::NotSignedIn);
+        assert!(!worker.signed_in);
+        assert!(worker.unverified_account.is_none());
+        let emitted: Vec<_> = events.try_iter().collect();
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Unavailable)))
+        );
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, Event::Auth(AuthStatus::Failed(_))))
+        );
     }
 
     /// "Set up playback here" reconnects with a saved grant instead of
